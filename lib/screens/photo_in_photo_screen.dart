@@ -8,6 +8,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import '../models/overlay_style.dart';
+import '../utils/save_util.dart';
+import '../widgets/ratio_picker_sheet.dart';
 
 // ── 배경 자동 감지 (isolate): 테두리 픽셀 평균 밝기로 판단 ──────────────────
 bool _detectBgTask(Uint8List bytes) {
@@ -139,6 +141,8 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
 
   XFile? _bgImage;
   XFile? _insertImage;
+  double _bgRatio = 9.0 / 16.0;
+  Alignment _bgAlignment = Alignment.center;
   late LabelLanguage _language;
 
   // 위치/크기
@@ -197,7 +201,11 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
 
   Future<void> _pickBg() async {
     final img = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (img != null) setState(() { _bgImage = img; _initialized = false; });
+    if (img == null || !mounted) return;
+    final result = await showRatioPickerSheet(context, img.path);
+    if (result == null || !mounted) return;
+    final (ratio, alignment) = result;
+    setState(() { _bgImage = img; _bgRatio = ratio; _bgAlignment = alignment; _initialized = false; });
   }
 
   Future<void> _pickInsert() async {
@@ -266,14 +274,17 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   }
 
   Future<void> _saveImage() async {
+    showSavingDialog(context);
     try {
-      final Uint8List? bytes = await _screenshotController.capture(pixelRatio: 5.0);
-      if (bytes == null) { _alert(_t('캡처 실패', 'Capture failed'), isError: true); return; }
+      final bytes = await _screenshotController.capture(pixelRatio: 5.0);
+      if (bytes == null) { hideSavingDialog(context); _alert(_t('캡처 실패', 'Capture failed'), isError: true); return; }
       final dir = await _getSaveDirectory();
       final file = File('${dir.path}/pip_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(bytes);
+      hideSavingDialog(context);
       _alert('${_t('저장 완료', 'Saved')}!\n${file.path}');
     } catch (e) {
+      hideSavingDialog(context);
       _alert('${_t('저장 실패', 'Save failed')}: $e', isError: true);
     }
   }
@@ -498,9 +509,12 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
             child: bothSelected
                 ? Padding(
                     padding: const EdgeInsets.all(12),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: LayoutBuilder(builder: (context, constraints) {
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: _bgRatio,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: LayoutBuilder(builder: (context, constraints) {
                         final previewSize = Size(constraints.maxWidth, constraints.maxHeight);
                         WidgetsBinding.instance.addPostFrameCallback((_) {
                           if (!_initialized) setState(() => _initPosition(previewSize));
@@ -546,7 +560,7 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                           key: _previewKey,
                           controller: _screenshotController,
                           child: Stack(fit: StackFit.expand, children: [
-                            Image.file(File(_bgImage!.path), fit: BoxFit.cover),
+                            Image.file(File(_bgImage!.path), fit: BoxFit.cover, alignment: _bgAlignment),
                             if (_initialized && _insertUiImage != null)
                               Positioned(
                                 left: _insertDx,
@@ -569,15 +583,36 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                           ]),
                         ));
                       }),
+                        ),
+                      ),
                     ),
                   )
-                : Center(
-                    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      const Icon(Icons.touch_app_rounded, size: 48, color: Color(0xFFCCCCCC)),
-                      const SizedBox(height: 12),
-                      Text(_t('위에서 두 사진을 선택하세요', 'Select two photos above'),
-                          style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 14)),
-                    ]),
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                            blurRadius: 6, offset: const Offset(0, 2))],
+                      ),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(_t('이렇게 사용하세요', 'How to use'),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                                color: Color(0xFF1C1C1E))),
+                        const SizedBox(height: 12),
+                        _guideStep('1', _t('배경 사진 선택', 'Select background photo'),
+                            _t('합성의 배경이 될 사진을 선택하세요', 'Choose the base photo')),
+                        _guideStep('2', _t('삽입할 사진 선택', 'Select insert photo'),
+                            _t('위에 올릴 사진을 선택하세요 (기록 캡처 등)', 'Choose the photo to place on top')),
+                        _guideStep('3', _t('위치·크기 조정 · 배경 제거', 'Adjust · Remove BG'),
+                            _t('드래그로 위치, 두 손가락으로 크기 조정 / 배경 제거·지우개로 불필요한 부분 제거', 'Drag to move, pinch to resize / Remove background or use eraser')),
+                        _guideStep('4', _t('저장', 'Save'),
+                            _t('완성되면 이미지 저장을 눌러 저장하세요', 'Tap Save Image when done'),
+                            isLast: true),
+                      ]),
+                    ),
                   ),
           ),
 
@@ -711,6 +746,34 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
               ]),
       ),
     );
+  }
+
+  Widget _guideStep(String num, String title, String desc, {bool isLast = false}) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(children: [
+        Container(
+          width: 22, height: 22,
+          decoration: const BoxDecoration(color: Color(0xFF1C1C1E), shape: BoxShape.circle),
+          child: Center(child: Text(num, style: const TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white))),
+        ),
+        if (!isLast)
+          Container(width: 1, height: 28, color: const Color(0xFFE5E5EA),
+              margin: const EdgeInsets.symmetric(vertical: 2)),
+      ]),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontSize: 13,
+                fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+            const SizedBox(height: 2),
+            Text(desc, style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93), height: 1.4)),
+          ]),
+        ),
+      ),
+    ]);
   }
 
   Widget _langToggle(String label, LabelLanguage lang) {

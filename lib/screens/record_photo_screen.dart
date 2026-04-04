@@ -5,6 +5,7 @@ import '../models/running_record.dart';
 import '../models/overlay_style.dart';
 import '../services/ocr_service.dart';
 import 'editor_screen.dart';
+import '../widgets/ratio_picker_sheet.dart';
 
 class RecordPhotoScreen extends StatefulWidget {
   final LabelLanguage language;
@@ -18,6 +19,8 @@ class RecordPhotoScreen extends StatefulWidget {
 class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
   XFile? _selectedImage;
   XFile? _captureImage;
+  double _selectedRatio = 9.0 / 16.0;
+  Alignment _selectedAlignment = Alignment.center;
   bool _isProcessing = false;
   late LabelLanguage _language;
 
@@ -31,7 +34,11 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
 
   Future<void> _pickPhoto() async {
     final image = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (image != null) setState(() => _selectedImage = image);
+    if (image == null || !mounted) return;
+    final result = await showRatioPickerSheet(context, image.path);
+    if (result == null || !mounted) return;
+    final (ratio, alignment) = result;
+    setState(() { _selectedImage = image; _selectedRatio = ratio; _selectedAlignment = alignment; });
   }
 
   Future<void> _pickCaptureImage() async {
@@ -47,7 +54,8 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
       final record = await OcrService.extractFromImage(_captureImage!.path);
       if (!mounted) return;
       Navigator.push(context, MaterialPageRoute(
-        builder: (_) => EditorScreen(image: _selectedImage!, record: record, language: _language),
+        builder: (_) => EditorScreen(image: _selectedImage!, record: record,
+            language: _language, ratio: _selectedRatio, alignment: _selectedAlignment),
       ));
     } catch (e) {
       if (mounted) _showError('${_t('OCR 처리 실패', 'OCR failed')}: $e');
@@ -93,6 +101,28 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))],
+              ),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Icon(Icons.info_outline_rounded, size: 16, color: Color(0xFF8E8E93)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _t(
+                      '배경 사진과 러닝 기록 캡처 사진을 선택하고 기록 사진 생성을 누르면 기록 관련 텍스트가 배경 사진에 추가됩니다.',
+                      'Select a background photo and running record capture, then tap Create to overlay your running stats on the photo.',
+                    ),
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600, height: 1.5),
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 16),
             _sectionLabel(_t('배경 사진', 'Background Photo')),
             GestureDetector(
               onTap: _pickPhoto,

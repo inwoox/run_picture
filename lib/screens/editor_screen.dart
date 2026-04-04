@@ -4,17 +4,21 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import '../models/running_record.dart';
 import '../models/overlay_style.dart';
+import '../utils/save_util.dart';
 
 class EditorScreen extends StatefulWidget {
   final XFile image;
   final RunningRecord record;
   final LabelLanguage language;
+  final double ratio;
+  final Alignment alignment;
 
-  const EditorScreen({super.key, required this.image, required this.record, this.language = LabelLanguage.korean});
+  const EditorScreen({super.key, required this.image, required this.record,
+      this.language = LabelLanguage.korean, this.ratio = 9.0 / 16.0,
+      this.alignment = Alignment.center});
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -160,14 +164,17 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   Future<void> _saveImage() async {
+    showSavingDialog(context);
     try {
-      final Uint8List? bytes = await _screenshotController.capture(pixelRatio: 3.0);
-      if (bytes == null) { _alert(_t('캡처 실패', 'Capture failed'), isError: true); return; }
+      final bytes = await _screenshotController.capture(pixelRatio: 3.0);
+      if (bytes == null) { hideSavingDialog(context); _alert(_t('캡처 실패', 'Capture failed'), isError: true); return; }
       final dir = await _getSaveDirectory();
       final file = File('${dir.path}/running_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(bytes);
+      hideSavingDialog(context);
       _alert('${_t('저장 완료', 'Saved')}!\n${file.path}');
     } catch (e) {
+      hideSavingDialog(context);
       _alert('${_t('저장 실패', 'Save failed')}: $e', isError: true);
     }
   }
@@ -326,25 +333,30 @@ class _EditorScreenState extends State<EditorScreen> {
         children: [
           Expanded(
             flex: 11,
-            child: LayoutBuilder(builder: (context, constraints) {
-              final previewSize = Size(constraints.maxWidth, constraints.maxHeight);
-              return Screenshot(
-                key: _previewKey,
-                controller: _screenshotController,
-                child: Stack(fit: StackFit.expand, children: [
-                  Image.file(File(widget.image.path), fit: BoxFit.cover),
-                  Positioned.fill(child: Align(
-                    alignment: _getAlignment(_style.position),
-                    child: Padding(padding: const EdgeInsets.all(12), child: _buildStatsOverlay()),
-                  )),
-                  if (widget.record.date.isNotEmpty)
-                    Positioned.fill(child: Align(
-                      alignment: _getAlignment(_style.datePosition),
-                      child: Padding(padding: const EdgeInsets.all(12), child: _buildDateOverlay()),
-                    )),
-                ]),
-              );
-            }),
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: widget.ratio,
+                child: Screenshot(
+                  key: _previewKey,
+                  controller: _screenshotController,
+                  child: MediaQuery(
+                    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
+                    child: Stack(fit: StackFit.expand, children: [
+                      Image.file(File(widget.image.path), fit: BoxFit.cover, alignment: widget.alignment),
+                      Positioned.fill(child: Align(
+                        alignment: _getAlignment(_style.position),
+                        child: Padding(padding: const EdgeInsets.all(12), child: _buildStatsOverlay()),
+                      )),
+                      if (widget.record.date.isNotEmpty)
+                        Positioned.fill(child: Align(
+                          alignment: _getAlignment(_style.datePosition),
+                          child: Padding(padding: const EdgeInsets.all(12), child: _buildDateOverlay()),
+                        )),
+                    ]),
+                  ),
+                ),
+              ),
+            ),
           ),
           Expanded(
             flex: 9,

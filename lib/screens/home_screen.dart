@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/overlay_style.dart';
+import '../app_settings.dart';
 import 'record_photo_screen.dart';
 import 'photo_in_photo_screen.dart';
 import 'running_card_screen.dart';
@@ -23,6 +24,10 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: Center(child: _fontSizeToggle()),
+        ),
         title: const Text('RUN PICTURE',
             style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                 fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
@@ -44,11 +49,11 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Expanded(
               child: _menuCard(
-                icon: Icons.directions_run_rounded,
-                title: _t('기록 사진 생성', 'Create Record Photo'),
-                subtitle: _t('러닝 기록을 사진에 오버레이', 'Overlay running stats on a photo'),
+                icon: Icons.style_rounded,
+                title: _t('러닝 카드 생성', 'Running Card'),
+                subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
                 onTap: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => RecordPhotoScreen(language: _language),
+                  builder: (_) => RunningCardScreen(language: _language),
                 )),
               ),
             ),
@@ -66,11 +71,11 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
             Expanded(
               child: _menuCard(
-                icon: Icons.style_rounded,
-                title: _t('러닝 카드 생성', 'Running Card'),
-                subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
+                icon: Icons.directions_run_rounded,
+                title: _t('기록 사진 생성', 'Create Record Photo'),
+                subtitle: _t('러닝 기록을 사진에 오버레이', 'Overlay running stats on a photo'),
                 onTap: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => RunningCardScreen(language: _language),
+                  builder: (_) => RecordPhotoScreen(language: _language),
                 )),
               ),
             ),
@@ -107,11 +112,38 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 16),
           Text(title, style: const TextStyle(
               fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
-              fontWeight: FontWeight.w700, fontSize: 18)),
+              fontWeight: FontWeight.w700, fontSize: 16)),
           const SizedBox(height: 6),
-          Text(subtitle, style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 13)),
+          Text(subtitle, style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
         ]),
       ),
+    );
+  }
+
+  Widget _fontSizeToggle() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: fontSizeNotifier,
+      builder: (_, isLarge, __) {
+        return GestureDetector(
+          onTap: () => fontSizeNotifier.value = !isLarge,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            decoration: BoxDecoration(
+              color: isLarge ? const Color(0xFF1C1C1E) : const Color(0xFFF5F7FA),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                  color: isLarge ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA)),
+            ),
+            child: Text('가+',
+              style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.w700,
+                color: isLarge ? Colors.white : const Color(0xFF8E8E93),
+                fontFamily: 'SUIT',
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -8,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/running_record.dart';
 import '../models/overlay_style.dart';
 import '../services/ocr_service.dart';
+import '../utils/save_util.dart';
 
 const _localFonts = {'SUIT'};
 
@@ -77,9 +77,10 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
   }
 
   Future<void> _saveCard() async {
+    showSavingDialog(context);
     try {
-      final Uint8List? bytes = await _screenshotController.capture(pixelRatio: 3.0);
-      if (bytes == null) return;
+      final bytes = await _screenshotController.capture(pixelRatio: 3.0);
+      if (bytes == null) { hideSavingDialog(context); return; }
       final Directory dir;
       if (Platform.isAndroid) {
         dir = Directory('/storage/emulated/0/Pictures/RunningPhoto');
@@ -95,9 +96,10 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
           'android.intent.action.MEDIA_SCANNER_SCAN_FILE',
           '-d', 'file://${file.path}']); } catch (_) {}
       }
-      if (mounted) _showAlert(_t('저장 완료', 'Saved'),
-          _t('갤러리 앱에서 확인하세요\n(RunningPhoto 폴더)', 'Check Gallery\n(RunningPhoto folder)'));
+      if (mounted) hideSavingDialog(context);
+      if (mounted) _showAlert(_t('저장 완료', 'Saved'), file.path);
     } catch (e) {
+      if (mounted) hideSavingDialog(context);
       if (mounted) _showAlert(_t('저장 실패', 'Save failed'), '$e', isError: true);
     }
   }
@@ -146,6 +148,8 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
           _buildPickerCard(),
           const SizedBox(height: 16),
 
+          if (_captureImage == null) _buildGuide(),
+
           if (_isProcessing)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 32),
@@ -160,7 +164,10 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
               borderRadius: BorderRadius.circular(16),
               child: Screenshot(
                 controller: _screenshotController,
-                child: _buildCard(),
+                child: MediaQuery(
+                  data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(1.0)),
+                  child: _buildCard(),
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -237,11 +244,11 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
 
   Widget _buildTemplateSelector() {
     final templates = [
-      (_TemplateType.minimal,  _t('미니멀', 'Minimal'),  Icons.crop_square_rounded),
-      (_TemplateType.center,   _t('센터', 'Center'),     Icons.center_focus_strong_rounded),
+      (_TemplateType.minimal,  _t('미니멀', 'Minimal'),   Icons.crop_square_rounded),
+      (_TemplateType.center,   _t('센터', 'Center'),      Icons.center_focus_strong_rounded),
       (_TemplateType.headline, _t('헤드라인', 'Headline'), Icons.text_fields_rounded),
-      (_TemplateType.grid,     _t('그리드', 'Grid'),     Icons.grid_view_rounded),
-      (_TemplateType.side,     _t('사이드', 'Side'),     Icons.view_sidebar_rounded),
+      (_TemplateType.grid,     _t('그리드', 'Grid'),      Icons.grid_view_rounded),
+      (_TemplateType.side,     _t('사이드', 'Side'),      Icons.view_sidebar_rounded),
     ];
     return SizedBox(
       height: 48,
@@ -349,6 +356,61 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
         }).toList()),
       ]),
     );
+  }
+
+  Widget _buildGuide() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+            blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_t('이렇게 사용하세요', 'How to use'),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                color: Color(0xFF1C1C1E))),
+        const SizedBox(height: 12),
+        _guideStep('1', _t('러닝 기록 캡처 선택', 'Select running capture'),
+            _t('러닝 앱의 기록 화면 스크린샷을 선택하세요', 'Choose a screenshot from your running app')),
+        _guideStep('2', _t('템플릿 선택', 'Choose a template'),
+            _t('미니멀, 센터, 헤드라인 등 원하는 스타일을 선택하세요', 'Pick a style: Minimal, Center, Headline, etc.')),
+        _guideStep('3', _t('색상 · 폰트 변경', 'Customize color & font'),
+            _t('액센트 색상과 폰트를 바꿔 나만의 카드를 만드세요', 'Adjust accent color and font to match your style')),
+        _guideStep('4', _t('카드 저장', 'Save card'),
+            _t('완성되면 카드 저장을 눌러 갤러리에 저장하세요', 'Tap Save Card to save to your gallery'),
+            isLast: true),
+      ]),
+    );
+  }
+
+  Widget _guideStep(String num, String title, String desc, {bool isLast = false}) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(children: [
+        Container(
+          width: 22, height: 22,
+          decoration: const BoxDecoration(color: Color(0xFF1C1C1E), shape: BoxShape.circle),
+          child: Center(child: Text(num, style: const TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white))),
+        ),
+        if (!isLast)
+          Container(width: 1, height: 28, color: const Color(0xFFE5E5EA),
+              margin: const EdgeInsets.symmetric(vertical: 2)),
+      ]),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontSize: 13,
+                fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+            const SizedBox(height: 2),
+            Text(desc, style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93), height: 1.4)),
+          ]),
+        ),
+      ),
+    ]);
   }
 
   Widget _langToggle(String label, LabelLanguage lang) {
@@ -755,6 +817,7 @@ List<Widget> _statRow(String font, RunningRecord r, String Function(String, Stri
   if (r.heartRate.isNotEmpty) add(t('심박수', 'HR'), r.heartRate);
   return items;
 }
+
 
 List<Widget> _centeredStats(String font, RunningRecord r, Color accent,
     String Function(String, String) t) {

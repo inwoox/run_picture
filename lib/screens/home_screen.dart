@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/overlay_style.dart';
 import 'record_photo_screen.dart';
 import 'photo_in_photo_screen.dart';
+import 'running_card_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -59,6 +60,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 subtitle: _t('사진 안에 다른 사진 삽입', 'Insert a photo inside another'),
                 onTap: () => Navigator.push(context, MaterialPageRoute(
                   builder: (_) => PhotoInPhotoScreen(language: _language),
+                )),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: _menuCard(
+                icon: Icons.style_rounded,
+                title: _t('러닝 카드 생성', 'Running Card'),
+                subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
+                onTap: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => RunningCardScreen(language: _language),
                 )),
               ),
             ),

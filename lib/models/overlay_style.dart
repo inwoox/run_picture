@@ -22,7 +22,7 @@ class OverlayStyle {
   final double customTextDy;
 
   const OverlayStyle({
-    this.fontFamily = 'Roboto',
+    this.fontFamily = 'SUIT',
     this.textColor = Colors.white,
     this.backgroundColor = Colors.black,
     this.backgroundOpacity = 0.5,

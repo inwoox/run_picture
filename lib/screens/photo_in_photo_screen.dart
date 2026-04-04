@@ -9,6 +9,29 @@ import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import '../models/overlay_style.dart';
 
+// ── 배경 자동 감지 (isolate): 테두리 픽셀 평균 밝기로 판단 ──────────────────
+bool _detectBgTask(Uint8List bytes) {
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return true;
+  int total = 0, count = 0;
+  final w = decoded.width, h = decoded.height;
+  for (int x = 0; x < w; x++) {
+    for (final row in [0, h - 1]) {
+      final p = decoded.getPixel(x, row);
+      total += (p.r.toInt() + p.g.toInt() + p.b.toInt()) ~/ 3;
+      count++;
+    }
+  }
+  for (int y = 1; y < h - 1; y++) {
+    for (final col in [0, w - 1]) {
+      final p = decoded.getPixel(col, y);
+      total += (p.r.toInt() + p.g.toInt() + p.b.toInt()) ~/ 3;
+      count++;
+    }
+  }
+  return count > 0 ? (total / count) < 128 : true; // true=어두운배경
+}
+
 // ── 배경 제거 (isolate) ─────────────────────────────────────────────────────
 Future<Uint8List> _bgRemoveTask(Map<String, dynamic> args) async {
   final bytes = args['bytes'] as Uint8List;
@@ -33,17 +56,21 @@ Future<Uint8List> _bgRemoveTask(Map<String, dynamic> args) async {
   return Uint8List.fromList(img.encodePng(result));
 }
 
+enum _EraseToolType { brush, rect }
+
 // ── 지우개 CustomPainter ────────────────────────────────────────────────────
 class _ErasePainter extends CustomPainter {
   final ui.Image image;
-  final List<List<Offset>> strokes;
+  final List<dynamic> history; // List<Offset>=브러시획, Rect=사각형
   final List<Offset> currentStroke;
+  final Rect? currentRect;
   final double radius;
 
   const _ErasePainter({
     required this.image,
-    required this.strokes,
+    required this.history,
     required this.currentStroke,
+    required this.currentRect,
     required this.radius,
   });
 
@@ -55,29 +82,42 @@ class _ErasePainter extends CustomPainter {
     canvas.drawImageRect(image, src, Rect.fromLTWH(0, 0, size.width, size.height),
         Paint()..filterQuality = FilterQuality.high);
 
-    final erasePaint = Paint()
+    final brushPaint = Paint()
       ..blendMode = BlendMode.dstOut
       ..style = PaintingStyle.stroke
       ..strokeWidth = radius * 2
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
+    final rectFillPaint = Paint()..blendMode = BlendMode.dstOut;
+
     void drawStroke(List<Offset> pts) {
       if (pts.isEmpty) return;
       if (pts.length == 1) {
-        canvas.drawCircle(pts[0], radius,
-            Paint()..blendMode = BlendMode.dstOut);
+        canvas.drawCircle(pts[0], radius, Paint()..blendMode = BlendMode.dstOut);
         return;
       }
       final path = Path()..moveTo(pts[0].dx, pts[0].dy);
       for (int i = 1; i < pts.length; i++) path.lineTo(pts[i].dx, pts[i].dy);
-      canvas.drawPath(path, erasePaint);
+      canvas.drawPath(path, brushPaint);
     }
 
-    for (final s in strokes) drawStroke(s);
+    for (final item in history) {
+      if (item is List<Offset>) drawStroke(item);
+      else if (item is Rect) canvas.drawRect(item, rectFillPaint);
+    }
     drawStroke(currentStroke);
+    if (currentRect != null) canvas.drawRect(currentRect!, rectFillPaint);
 
     canvas.restore();
+
+    // 사각형 선택 테두리 (erase layer 밖에서 그려야 보임)
+    if (currentRect != null) {
+      canvas.drawRect(currentRect!, Paint()
+        ..style = PaintingStyle.stroke
+        ..color = const Color(0xCCFFFFFF)
+        ..strokeWidth = 1.5);
+    }
   }
 
   @override
@@ -111,13 +151,17 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   bool _isProcessingBg = false;
   Uint8List? _processedBytes;
   double _bgThreshold = 60;
-  bool _removeDark = true; // true=어두운배경(가민), false=밝은배경(스트라바)
+  bool? _removeDark = null; // null=자동, true=어두운배경(가민), false=밝은배경(스트라바)
+  bool _invertColors = false; // 색상 반전
 
   // 지우개
   bool _eraseMode = false;
+  _EraseToolType _eraseToolType = _EraseToolType.brush;
   double _eraseRadius = 20;
-  List<List<Offset>> _eraseStrokes = [];
+  List<dynamic> _eraseHistory = []; // List<Offset>=브러시, Rect=사각형
   List<Offset> _currentStroke = [];
+  Rect? _currentRect;
+  Offset? _rectStart;
   ui.Image? _insertUiImage;
 
   @override
@@ -164,8 +208,11 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
         _initialized = false;
         _removeBackground = false;
         _processedBytes = null;
-        _eraseStrokes = [];
+        _eraseHistory = [];
         _currentStroke = [];
+        _currentRect = null;
+        _rectStart = null;
+        _invertColors = false;
         _insertUiImage = null;
       });
       await _loadUiImageFromFile(image.path);
@@ -185,7 +232,8 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
     setState(() => _isProcessingBg = true);
     try {
       final bytes = await File(_insertImage!.path).readAsBytes();
-      final result = await compute(_bgRemoveTask, {'bytes': bytes, 'threshold': _bgThreshold.toInt(), 'removeDark': _removeDark});
+      final removeDark = _removeDark ?? await compute(_detectBgTask, bytes);
+      final result = await compute(_bgRemoveTask, {'bytes': bytes, 'threshold': _bgThreshold.toInt(), 'removeDark': removeDark});
       setState(() { _processedBytes = result; _removeBackground = true; });
       await _loadUiImageFromBytes(result);
     } finally {
@@ -199,10 +247,10 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   }
 
   void _undoErase() {
-    if (_eraseStrokes.isNotEmpty) setState(() => _eraseStrokes.removeLast());
+    if (_eraseHistory.isNotEmpty) setState(() => _eraseHistory.removeLast());
   }
 
-  void _resetErase() => setState(() { _eraseStrokes = []; _currentStroke = []; });
+  void _resetErase() => setState(() { _eraseHistory = []; _currentStroke = []; _currentRect = null; _rectStart = null; });
 
   Future<Directory> _getSaveDirectory() async {
     if (Platform.isAndroid) {
@@ -245,20 +293,33 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   Widget _buildInsertWidget() {
     if (_insertUiImage == null) return const SizedBox();
     final imgH = _insertWidth * _insertUiImage!.height / _insertUiImage!.width;
-    return SizedBox(
+    final painted = SizedBox(
       width: _insertWidth,
       height: imgH,
       child: CustomPaint(
         size: Size(_insertWidth, imgH),
         painter: _ErasePainter(
           image: _insertUiImage!,
-          strokes: _eraseStrokes,
+          history: _eraseHistory,
           currentStroke: _currentStroke,
+          currentRect: _currentRect,
           radius: _eraseRadius,
         ),
       ),
     );
+    if (!_invertColors) return painted;
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix([
+        -1, 0, 0, 0, 255,
+         0,-1, 0, 0, 255,
+         0, 0,-1, 0, 255,
+         0, 0, 0, 1,   0,
+      ]),
+      child: painted,
+    );
   }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -335,6 +396,8 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                   // 배경 종류 선택 (항상 표시)
                   const SizedBox(height: 6),
                   Row(children: [
+                    _bgTypeToggle(_t('자동', 'Auto'), null),
+                    const SizedBox(width: 8),
                     _bgTypeToggle(_t('어두운 배경', 'Dark BG'), true),
                     const SizedBox(width: 8),
                     _bgTypeToggle(_t('밝은 배경', 'Light BG'), false),
@@ -354,6 +417,23 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
 
                   const Divider(height: 16, color: Color(0xFFEEEEEE)),
 
+                  // 색상 반전 토글
+                  Row(children: [
+                    const Icon(Icons.invert_colors_rounded, size: 15, color: Color(0xFF1C1C1E)),
+                    const SizedBox(width: 6),
+                    Text(_t('색상 반전', 'Invert Colors'),
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+                    const Spacer(),
+                    Switch(
+                      value: _invertColors,
+                      activeThumbColor: const Color(0xFF1C1C1E),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: (v) => setState(() => _invertColors = v),
+                    ),
+                  ]),
+
+                  const Divider(height: 16, color: Color(0xFFEEEEEE)),
+
                   // 지우개 토글
                   Row(children: [
                     const Icon(Icons.draw_rounded, size: 15, color: Color(0xFF1C1C1E)),
@@ -369,33 +449,43 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                     ),
                   ]),
                   if (_eraseMode) ...[
+                    // 도구 선택
+                    const SizedBox(height: 4),
                     Row(children: [
-                      Text(_t('브러시 크기', 'Size'),
-                          style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
-                      Expanded(child: _thinSlider(_eraseRadius, 5, 60, (v) => setState(() => _eraseRadius = v))),
-                      SizedBox(width: 28, child: Text(_eraseRadius.toInt().toString(),
-                          style: const TextStyle(fontSize: 11, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600))),
+                      _eraseToolToggle(Icons.brush_rounded, _t('브러시', 'Brush'), _EraseToolType.brush),
+                      const SizedBox(width: 8),
+                      _eraseToolToggle(Icons.crop_square_rounded, _t('사각형', 'Rect'), _EraseToolType.rect),
                     ]),
+                    const SizedBox(height: 4),
+                    // 브러시 크기 (브러시 모드일 때만)
+                    if (_eraseToolType == _EraseToolType.brush)
+                      Row(children: [
+                        Text(_t('브러시 크기', 'Size'),
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+                        Expanded(child: _thinSlider(_eraseRadius, 5, 60, (v) => setState(() => _eraseRadius = v))),
+                        SizedBox(width: 28, child: Text(_eraseRadius.toInt().toString(),
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600))),
+                      ]),
                     Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                       TextButton.icon(
-                        onPressed: _eraseStrokes.isNotEmpty ? _undoErase : null,
+                        onPressed: _eraseHistory.isNotEmpty ? _undoErase : null,
                         icon: const Icon(Icons.undo_rounded, size: 14),
-                        label: Text(_t('실행 취소', 'Undo'),
-                            style: const TextStyle(fontSize: 12)),
+                        label: Text(_t('실행 취소', 'Undo'), style: const TextStyle(fontSize: 12)),
                         style: TextButton.styleFrom(foregroundColor: const Color(0xFF1C1C1E),
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
                       ),
                       TextButton.icon(
-                        onPressed: _eraseStrokes.isNotEmpty ? _resetErase : null,
+                        onPressed: _eraseHistory.isNotEmpty ? _resetErase : null,
                         icon: const Icon(Icons.refresh_rounded, size: 14),
-                        label: Text(_t('초기화', 'Reset'),
-                            style: const TextStyle(fontSize: 12)),
+                        label: Text(_t('초기화', 'Reset'), style: const TextStyle(fontSize: 12)),
                         style: TextButton.styleFrom(foregroundColor: const Color(0xFF1C1C1E),
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
                       ),
                     ]),
                     Text(
-                      _t('사진 위에서 드래그하여 지울 영역 선택', 'Drag on photo to erase'),
+                      _eraseToolType == _EraseToolType.brush
+                          ? _t('사진 위에서 드래그하여 지울 영역 선택', 'Drag on photo to erase')
+                          : _t('드래그로 지울 사각형 영역 선택', 'Drag to select rect area'),
                       style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
                     ),
                   ],
@@ -416,7 +506,43 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                           if (!_initialized) setState(() => _initPosition(previewSize));
                         });
 
-                        return Screenshot(
+                        // 지우개 모드: 프리뷰 전체에서 드래그 감지 후 삽입 이미지 좌표로 변환
+                        Offset _toLocal(Offset p) =>
+                            Offset(p.dx - _insertDx, p.dy - _insertDy);
+
+                        return Listener(
+                          behavior: _eraseMode ? HitTestBehavior.opaque : HitTestBehavior.deferToChild,
+                          onPointerDown: _eraseMode ? (e) {
+                            final p = _toLocal(e.localPosition);
+                            if (_eraseToolType == _EraseToolType.brush) {
+                              setState(() => _currentStroke = [p]);
+                            } else {
+                              setState(() { _rectStart = p; _currentRect = null; });
+                            }
+                          } : null,
+                          onPointerMove: _eraseMode ? (e) {
+                            final p = _toLocal(e.localPosition);
+                            if (_eraseToolType == _EraseToolType.brush) {
+                              setState(() => _currentStroke.add(p));
+                            } else if (_rectStart != null) {
+                              setState(() => _currentRect = Rect.fromPoints(_rectStart!, p));
+                            }
+                          } : null,
+                          onPointerUp: _eraseMode ? (e) {
+                            if (_eraseToolType == _EraseToolType.brush && _currentStroke.isNotEmpty) {
+                              setState(() {
+                                _eraseHistory.add(List<Offset>.from(_currentStroke));
+                                _currentStroke = [];
+                              });
+                            } else if (_eraseToolType == _EraseToolType.rect && _currentRect != null) {
+                              setState(() {
+                                _eraseHistory.add(_currentRect!);
+                                _currentRect = null;
+                                _rectStart = null;
+                              });
+                            }
+                          } : null,
+                          child: Screenshot(
                           key: _previewKey,
                           controller: _screenshotController,
                           child: Stack(fit: StackFit.expand, children: [
@@ -425,41 +551,23 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                               Positioned(
                                 left: _insertDx,
                                 top: _insertDy,
-                                child: GestureDetector(
-                                  onScaleStart: (d) {
-                                    if (_eraseMode) {
-                                      _currentStroke = [d.localFocalPoint];
-                                    } else {
-                                      _widthAtScaleStart = _insertWidth;
-                                    }
-                                  },
-                                  onScaleUpdate: (d) {
-                                    if (_eraseMode) {
-                                      setState(() => _currentStroke.add(d.localFocalPoint));
-                                    } else {
-                                      setState(() {
-                                        _insertDx = (_insertDx + d.focalPointDelta.dx)
-                                            .clamp(-_insertWidth * 0.5, previewSize.width - _insertWidth * 0.5);
-                                        _insertDy = (_insertDy + d.focalPointDelta.dy)
-                                            .clamp(-_insertWidth * 0.5, previewSize.height - _insertWidth * 0.5);
-                                        _insertWidth = (_widthAtScaleStart * d.scale)
-                                            .clamp(40.0, previewSize.width * 1.2);
-                                      });
-                                    }
-                                  },
-                                  onScaleEnd: (d) {
-                                    if (_eraseMode && _currentStroke.isNotEmpty) {
-                                      setState(() {
-                                        _eraseStrokes.add(List.from(_currentStroke));
-                                        _currentStroke = [];
-                                      });
-                                    }
-                                  },
-                                  child: _buildInsertWidget(),
-                                ),
+                                child: _eraseMode
+                                    ? _buildInsertWidget()
+                                    : GestureDetector(
+                                        onScaleStart: (d) => _widthAtScaleStart = _insertWidth,
+                                        onScaleUpdate: (d) {
+                                          setState(() {
+                                            _insertDx += d.focalPointDelta.dx;
+                                            _insertDy += d.focalPointDelta.dy;
+                                            _insertWidth = (_widthAtScaleStart * d.scale)
+                                                .clamp(40.0, previewSize.width * 1.2);
+                                          });
+                                        },
+                                        child: _buildInsertWidget(),
+                                      ),
                               ),
                           ]),
-                        );
+                        ));
                       }),
                     ),
                   )
@@ -507,7 +615,30 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
     );
   }
 
-  Widget _bgTypeToggle(String label, bool isDark) {
+  Widget _eraseToolToggle(IconData icon, String label, _EraseToolType type) {
+    final selected = _eraseToolType == type;
+    return GestureDetector(
+      onTap: () => setState(() => _eraseToolType = type),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFF5F7FA),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 13, color: selected ? Colors.white : const Color(0xFF8E8E93)),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(
+            fontSize: 11, fontWeight: FontWeight.w600,
+            color: selected ? Colors.white : const Color(0xFF8E8E93),
+          )),
+        ]),
+      ),
+    );
+  }
+
+  Widget _bgTypeToggle(String label, bool? isDark) {
     final selected = _removeDark == isDark;
     return GestureDetector(
       onTap: () {

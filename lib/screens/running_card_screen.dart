@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:screenshot/screenshot.dart';
+import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/running_record.dart';
 import '../models/overlay_style.dart';
 import '../services/ocr_service.dart';
 import '../utils/save_util.dart';
+import '../widgets/ocr_confirm_sheet.dart';
 
 const _localFonts = {'SUIT'};
 
@@ -20,7 +22,7 @@ TextStyle _ts(String font, {double? fontSize, FontWeight? fontWeight,
   catch (_) { return base.copyWith(fontFamily: font); }
 }
 
-enum _TemplateType { minimal, center, headline, grid, side }
+enum _TemplateType { minimal, center, grid, side, badge, split, dark }
 
 const _accentColors = [
   Color(0xFF1C1C1E),
@@ -31,7 +33,16 @@ const _accentColors = [
   Color(0xFF6A1B9A),
 ];
 
-const _fonts = ['SUIT', 'Roboto', 'Oswald', 'Montserrat'];
+const _fonts = [
+  'SUIT', 'Roboto', 'Oswald', 'Montserrat',
+  // 손글씨 / 붓글씨 (OFL 상업 허용)
+  'Nanum Pen Script',    // 한국어 손글씨
+  'Nanum Brush Script',  // 한국어 붓글씨
+  'Black Han Sans',      // 굵은 한국어 포스터체
+  'Gaegu',               // 한국어 귀여운 손글씨
+  'Caveat',              // 영문 손글씨
+  'Pacifico',            // 영문 둥근 붓글씨
+];
 
 class RunningCardScreen extends StatefulWidget {
   final LabelLanguage language;
@@ -65,7 +76,16 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
     setState(() { _captureImage = image; _isProcessing = true; _record = null; });
     try {
       final record = await OcrService.extractFromImage(image.path);
-      if (mounted) setState(() => _record = record);
+      if (!mounted) return;
+      // OCR 결과 확인·수정 시트
+      final confirmed = await showOcrConfirmSheet(context, record, _language);
+      if (!mounted) return;
+      if (confirmed == null) {
+        // 취소 시 이미지 선택 초기화
+        setState(() { _captureImage = null; });
+        return;
+      }
+      setState(() => _record = confirmed);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('OCR 실패: $e'),
@@ -81,23 +101,13 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
     try {
       final bytes = await _screenshotController.capture(pixelRatio: 3.0);
       if (bytes == null) { hideSavingDialog(context); return; }
-      final Directory dir;
-      if (Platform.isAndroid) {
-        dir = Directory('/storage/emulated/0/Pictures/RunningPhoto');
-      } else {
-        final docs = await getApplicationDocumentsDirectory();
-        dir = Directory('${docs.path}/RunningPhoto');
-      }
-      if (!await dir.exists()) await dir.create(recursive: true);
-      final file = File('${dir.path}/card_${DateTime.now().millisecondsSinceEpoch}.png');
+      final tmp = await getTemporaryDirectory();
+      final file = File('${tmp.path}/rp_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(bytes);
-      if (Platform.isAndroid) {
-        try { await Process.run('am', ['broadcast', '-a',
-          'android.intent.action.MEDIA_SCANNER_SCAN_FILE',
-          '-d', 'file://${file.path}']); } catch (_) {}
-      }
+      await Gal.putImage(file.path, album: 'RunPicture');
+      await file.delete();
       if (mounted) hideSavingDialog(context);
-      if (mounted) _showAlert(_t('저장 완료', 'Saved'), file.path);
+      if (mounted) _showAlert(_t('저장 완료', 'Saved'), _t('사진첩에 저장되었습니다!', 'Saved to photo library!'));
     } catch (e) {
       if (mounted) hideSavingDialog(context);
       if (mounted) _showAlert(_t('저장 실패', 'Save failed'), '$e', isError: true);
@@ -244,11 +254,13 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
 
   Widget _buildTemplateSelector() {
     final templates = [
-      (_TemplateType.minimal,  _t('미니멀', 'Minimal'),   Icons.crop_square_rounded),
-      (_TemplateType.center,   _t('센터', 'Center'),      Icons.center_focus_strong_rounded),
-      (_TemplateType.headline, _t('헤드라인', 'Headline'), Icons.text_fields_rounded),
-      (_TemplateType.grid,     _t('그리드', 'Grid'),      Icons.grid_view_rounded),
-      (_TemplateType.side,     _t('사이드', 'Side'),      Icons.view_sidebar_rounded),
+      (_TemplateType.minimal, _t('미니멀', 'Minimal'), Icons.crop_square_rounded),
+      (_TemplateType.center,  _t('센터', 'Center'),    Icons.center_focus_strong_rounded),
+      (_TemplateType.grid,    _t('그리드', 'Grid'),    Icons.grid_view_rounded),
+      (_TemplateType.side,    _t('사이드', 'Side'),    Icons.view_sidebar_rounded),
+      (_TemplateType.badge,   _t('배지', 'Badge'),     Icons.military_tech_rounded),
+      (_TemplateType.split,   _t('스플릿', 'Split'),   Icons.splitscreen_rounded),
+      (_TemplateType.dark,    _t('다크', 'Dark'),      Icons.dark_mode_rounded),
     ];
     return SizedBox(
       height: 48,
@@ -289,12 +301,16 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
         return _MinimalCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
       case _TemplateType.center:
         return _CenterCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
-      case _TemplateType.headline:
-        return _HeadlineCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
       case _TemplateType.grid:
         return _GridCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
       case _TemplateType.side:
         return _SideCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+      case _TemplateType.badge:
+        return _BadgeCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+      case _TemplateType.split:
+        return _SplitCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+      case _TemplateType.dark:
+        return _DarkCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
     }
   }
 
@@ -459,7 +475,7 @@ class _MinimalCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: Text(record.date,
-                style: _ts(font, fontSize: 11, color: _grey))),
+                style: _ts(font, fontSize: 12, color: _grey))),
             Text('RUN PICTURE', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
           ]),
@@ -511,7 +527,7 @@ class _CenterCard extends StatelessWidget {
               fontWeight: FontWeight.w800, color: accent, letterSpacing: 3)),
           if (record.date.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(record.date, style: _ts(font, fontSize: 11, color: _grey)),
+            Text(record.date, style: _ts(font, fontSize: 12, color: _grey)),
           ],
           const Spacer(flex: 3),
 
@@ -551,96 +567,6 @@ class _CenterCard extends StatelessWidget {
   }
 }
 
-// ── 3. 헤드라인 ───────────────────────────────────────────────────────────────
-// 흰 배경 / 거리 숫자 최대로 크게 화면 가득 / 통계는 최하단 한 줄
-class _HeadlineCard extends StatelessWidget {
-  final RunningRecord record;
-  final Color accent;
-  final String font;
-  final LabelLanguage language;
-  const _HeadlineCard({required this.record, required this.accent,
-      required this.font, required this.language});
-  String _t(String ko, String en) => language == LabelLanguage.korean ? ko : en;
-
-  @override
-  Widget build(BuildContext context) {
-    final dist = record.distance.replaceAll(RegExp(r'\s*km'), '').trim();
-    return AspectRatio(
-      aspectRatio: _cardRatio,
-      child: Container(
-        color: Colors.white,
-        child: Stack(children: [
-          // 액센트 상단 바
-          Positioned(top: 0, left: 0, right: 0,
-              child: Container(height: 5, color: accent)),
-
-          Padding(
-            padding: const EdgeInsets.fromLTRB(28, 20, 28, 20),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // 상단 라벨
-              Row(children: [
-                Text(_t('거리', 'DISTANCE'), style: _ts(font, fontSize: 11,
-                    color: accent, letterSpacing: 3, fontWeight: FontWeight.w700)),
-                const Spacer(),
-                Text('RUN PICTURE', style: _ts(font, fontSize: 9,
-                    color: _grey, letterSpacing: 1.5)),
-              ]),
-
-              const Spacer(flex: 1),
-
-              // 거리 — 화면 가득
-              if (dist.isNotEmpty)
-                FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
-                  child: Text(dist, style: _ts(font, fontSize: 130,
-                      fontWeight: FontWeight.w900, color: _dark, height: 0.9)),
-                ),
-
-              // km 단위
-              Row(children: [
-                Container(width: 3, height: 18, color: accent,
-                    margin: const EdgeInsets.only(right: 8)),
-                Text('km', style: _ts(font, fontSize: 18,
-                    fontWeight: FontWeight.w700, color: _dark)),
-              ]),
-
-              const Spacer(flex: 2),
-
-              // 하단 통계 한 줄
-              Container(height: 1, color: const Color(0xFFEEEEEE)),
-              const SizedBox(height: 14),
-              Row(children: [
-                if (record.time.isNotEmpty) _miniStat(font, _t('시간', 'TIME'), record.time),
-                if (record.time.isNotEmpty && record.pace.isNotEmpty)
-                  _miniDivider(),
-                if (record.pace.isNotEmpty) _miniStat(font, _t('페이스', 'PACE'), record.pace),
-                if (record.pace.isNotEmpty && record.heartRate.isNotEmpty)
-                  _miniDivider(),
-                if (record.heartRate.isNotEmpty) _miniStat(font, _t('심박', 'HR'), record.heartRate),
-                const Spacer(),
-                if (record.date.isNotEmpty)
-                  Text(record.date, style: _ts(font, fontSize: 10, color: _grey)),
-              ]),
-            ]),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  Widget _miniStat(String font, String label, String value) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: _ts(font, fontSize: 8, color: _grey,
-          letterSpacing: 1.5, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 2),
-      Text(value, style: _ts(font, fontSize: 13, fontWeight: FontWeight.w800, color: _dark)),
-    ],
-  );
-
-  Widget _miniDivider() => Container(
-      width: 1, height: 24, color: const Color(0xFFEEEEEE),
-      margin: const EdgeInsets.symmetric(horizontal: 14));
-}
-
 // ── 4. 그리드 ────────────────────────────────────────────────────────────────
 // 흰 배경 / 상단 거리 + 날짜 / 하단 통계를 격자 박스로 표시
 class _GridCard extends StatelessWidget {
@@ -656,9 +582,9 @@ class _GridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dist = record.distance.replaceAll(RegExp(r'\s*km'), '').trim();
     final stats = <(String, String)>[
-      if (record.time.isNotEmpty)      (_t('총 시간', 'TIME'),   record.time),
-      if (record.pace.isNotEmpty)      (_t('평균 페이스', 'PACE'), record.pace),
-      if (record.heartRate.isNotEmpty) (_t('평균 심박수', 'HR'),  record.heartRate),
+      if (record.time.isNotEmpty)      (_t('총 시간', 'TIME'),     record.time),
+      if (record.pace.isNotEmpty)      (_t('평균 페이스', 'PACE'),  record.pace),
+      if (record.heartRate.isNotEmpty) (_t('평균 심박수', 'HR'),    record.heartRate),
     ];
 
     return AspectRatio(
@@ -673,7 +599,7 @@ class _GridCard extends StatelessWidget {
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
             const Spacer(),
             if (record.date.isNotEmpty)
-              Text(record.date, style: _ts(font, fontSize: 10, color: _grey)),
+              Text(record.date, style: _ts(font, fontSize: 11, color: _grey)),
           ]),
           const Spacer(flex: 1),
 
@@ -703,10 +629,10 @@ class _GridCard extends StatelessWidget {
               border: Border(left: BorderSide(color: accent, width: 3)),
             ),
             child: Row(children: [
-              Text(s.$1, style: _ts(font, fontSize: 11, color: _grey,
+              Text(s.$1, style: _ts(font, fontSize: 12, color: _grey,
                   fontWeight: FontWeight.w600)),
               const Spacer(),
-              Text(s.$2, style: _ts(font, fontSize: 20,
+              Text(s.$2, style: _ts(font, fontSize: 22,
                   fontWeight: FontWeight.w800, color: _dark)),
             ]),
           )),
@@ -733,9 +659,9 @@ class _SideCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dist = record.distance.replaceAll(RegExp(r'\s*km'), '').trim();
     final stats = <(String, String)>[
-      if (record.time.isNotEmpty)      (_t('시간', 'TIME'),   record.time),
-      if (record.pace.isNotEmpty)      (_t('페이스', 'PACE'), record.pace),
-      if (record.heartRate.isNotEmpty) (_t('심박', 'HR'),     record.heartRate),
+      if (record.time.isNotEmpty)      (_t('총 시간', 'TIME'),     record.time),
+      if (record.pace.isNotEmpty)      (_t('평균 페이스', 'PACE'),  record.pace),
+      if (record.heartRate.isNotEmpty) (_t('평균 심박수', 'HR'),    record.heartRate),
     ];
 
     return AspectRatio(
@@ -754,16 +680,16 @@ class _SideCard extends StatelessWidget {
                   letterSpacing: 1.5, height: 1.4)),
               const Spacer(),
               ...stats.expand((s) => [
-                Text(s.$1, style: _ts(font, fontSize: 9,
+                Text(s.$1, style: _ts(font, fontSize: 10,
                     color: Colors.white.withValues(alpha: 0.65),
                     letterSpacing: 1.5, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 3),
-                Text(s.$2, style: _ts(font, fontSize: 16,
+                Text(s.$2, style: _ts(font, fontSize: 18,
                     fontWeight: FontWeight.w800, color: Colors.white)),
                 const SizedBox(height: 18),
               ]),
               if (record.date.isNotEmpty)
-                Text(record.date, style: _ts(font, fontSize: 9,
+                Text(record.date, style: _ts(font, fontSize: 10,
                     color: Colors.white.withValues(alpha: 0.55))),
             ]),
           ),
@@ -805,16 +731,16 @@ List<Widget> _statRow(String font, RunningRecord r, String Function(String, Stri
     }
     items.add(Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: _ts(font, fontSize: 9, color: _grey,
+          Text(label, style: _ts(font, fontSize: 10, color: _grey,
               letterSpacing: 1.5, fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
-          Text(value, style: _ts(font, fontSize: 14,
+          Text(value, style: _ts(font, fontSize: 15,
               fontWeight: FontWeight.w800, color: _dark)),
         ])));
   }
   if (r.time.isNotEmpty)      add(t('총 시간', 'TIME'), r.time);
-  if (r.pace.isNotEmpty)      add(t('페이스', 'PACE'), r.pace);
-  if (r.heartRate.isNotEmpty) add(t('심박수', 'HR'), r.heartRate);
+  if (r.pace.isNotEmpty)      add(t('평균 페이스', 'PACE'), r.pace);
+  if (r.heartRate.isNotEmpty) add(t('평균 심박수', 'HR'), r.heartRate);
   return items;
 }
 
@@ -824,14 +750,276 @@ List<Widget> _centeredStats(String font, RunningRecord r, Color accent,
   final items = <Widget>[];
   void add(String label, String value) {
     items.add(Column(children: [
-      Text(value, style: _ts(font, fontSize: 18, fontWeight: FontWeight.w800, color: _dark)),
+      Text(value, style: _ts(font, fontSize: 20, fontWeight: FontWeight.w800, color: _dark)),
       const SizedBox(height: 4),
-      Text(label, style: _ts(font, fontSize: 9, color: _grey,
+      Text(label, style: _ts(font, fontSize: 10, color: _grey,
           letterSpacing: 1.5, fontWeight: FontWeight.w500)),
     ]));
   }
   if (r.time.isNotEmpty)      add(t('총 시간', 'TIME'), r.time);
-  if (r.pace.isNotEmpty)      add(t('페이스', 'PACE'), r.pace);
-  if (r.heartRate.isNotEmpty) add(t('심박수', 'HR'), r.heartRate);
+  if (r.pace.isNotEmpty)      add(t('평균 페이스', 'PACE'), r.pace);
+  if (r.heartRate.isNotEmpty) add(t('평균 심박수', 'HR'), r.heartRate);
   return items;
+}
+
+// ── 6. 배지 ──────────────────────────────────────────────────────────────────
+// 중앙 원형 거리 배지 + 하단 균일 크기 통계 박스
+class _BadgeCard extends StatelessWidget {
+  final RunningRecord record;
+  final Color accent;
+  final String font;
+  final LabelLanguage language;
+  const _BadgeCard({required this.record, required this.accent,
+      required this.font, required this.language});
+  String _t(String ko, String en) => language == LabelLanguage.korean ? ko : en;
+
+  @override
+  Widget build(BuildContext context) {
+    final dist = record.distance.replaceAll(RegExp(r'\s*km'), '').trim();
+    final stats = <(String, String)>[
+      if (record.time.isNotEmpty)      (_t('총 시간', 'TIME'),     record.time),
+      if (record.pace.isNotEmpty)      (_t('평균 페이스', 'PACE'),  record.pace),
+      if (record.heartRate.isNotEmpty) (_t('평균 심박수', 'HR'),    record.heartRate),
+    ];
+
+    return AspectRatio(
+      aspectRatio: _cardRatio,
+      child: Container(
+        color: Colors.white,
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+        child: Column(children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+                fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
+            if (record.date.isNotEmpty)
+              Text(record.date, style: _ts(font, fontSize: 11, color: _grey)),
+          ]),
+          const Spacer(flex: 2),
+
+          // 원형 배지
+          Container(
+            width: 160, height: 160,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: accent, width: 3),
+              color: const Color(0xFFF8F8F8),
+            ),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(_t('거리', 'DIST'), style: _ts(font, fontSize: 10,
+                  color: _grey, letterSpacing: 2, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 2),
+              if (dist.isNotEmpty)
+                FittedBox(
+                  child: Text(dist, style: _ts(font, fontSize: 52,
+                      fontWeight: FontWeight.w900, color: _dark, height: 1.0)),
+                ),
+              Text('km', style: _ts(font, fontSize: 14,
+                  fontWeight: FontWeight.w700, color: accent)),
+            ]),
+          ),
+          const Spacer(flex: 2),
+
+          // 하단 균일 크기 통계
+          if (stats.isNotEmpty)
+            Row(children: [
+              for (int i = 0; i < stats.length; i++) ...[
+                if (i > 0) const SizedBox(width: 10),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF5F7FA),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border(top: BorderSide(color: accent, width: 2.5)),
+                    ),
+                    child: Column(children: [
+                      Text(stats[i].$2, style: _ts(font, fontSize: 17,
+                          fontWeight: FontWeight.w800, color: _dark)),
+                      const SizedBox(height: 4),
+                      Text(stats[i].$1, style: _ts(font, fontSize: 10,
+                          color: _grey, letterSpacing: 1.5, fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ),
+              ],
+            ]),
+          const Spacer(flex: 1),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── 7. 스플릿 ────────────────────────────────────────────────────────────────
+// 상단 액센트 배경 거리 / 하단 흰 배경 시간·페이스·심박 균등 배치
+class _SplitCard extends StatelessWidget {
+  final RunningRecord record;
+  final Color accent;
+  final String font;
+  final LabelLanguage language;
+  const _SplitCard({required this.record, required this.accent,
+      required this.font, required this.language});
+  String _t(String ko, String en) => language == LabelLanguage.korean ? ko : en;
+
+  @override
+  Widget build(BuildContext context) {
+    final dist = record.distance.replaceAll(RegExp(r'\s*km'), '').trim();
+    final stats = <(String, String)>[
+      if (record.time.isNotEmpty)      (_t('총 시간', 'TIME'),     record.time),
+      if (record.pace.isNotEmpty)      (_t('평균 페이스', 'PACE'),  record.pace),
+      if (record.heartRate.isNotEmpty) (_t('평균 심박수', 'HR'),    record.heartRate),
+    ];
+
+    return AspectRatio(
+      aspectRatio: _cardRatio,
+      child: Column(children: [
+        // 상단: 거리 (액센트 배경)
+        Expanded(
+          flex: 5,
+          child: Container(
+            width: double.infinity,
+            color: accent,
+            padding: const EdgeInsets.fromLTRB(28, 28, 28, 12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white.withValues(alpha: 0.6), letterSpacing: 2)),
+              const Spacer(),
+              Text(_t('거리', 'DISTANCE'), style: _ts(font, fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.7),
+                  letterSpacing: 2.5, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 4),
+              if (dist.isNotEmpty)
+                FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text(dist, style: _ts(font, fontSize: 80,
+                        fontWeight: FontWeight.w900, color: Colors.white, height: 1.0)),
+                    const SizedBox(width: 8),
+                    Padding(padding: const EdgeInsets.only(bottom: 10),
+                      child: Text('km', style: _ts(font, fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white.withValues(alpha: 0.8)))),
+                  ]),
+                ),
+              const SizedBox(height: 8),
+            ]),
+          ),
+        ),
+
+        // 하단: 통계 균등 배치 (흰 배경)
+        Expanded(
+          flex: 4,
+          child: Container(
+            width: double.infinity,
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+            child: Column(children: [
+              if (stats.isNotEmpty)
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (int i = 0; i < stats.length; i++) ...[
+                        if (i > 0)
+                          Container(width: 1, color: const Color(0xFFEEEEEE),
+                              margin: const EdgeInsets.symmetric(horizontal: 12)),
+                        Expanded(
+                          child: Column(mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                            Text(stats[i].$2, style: _ts(font, fontSize: 20,
+                                fontWeight: FontWeight.w800, color: _dark)),
+                            const SizedBox(height: 6),
+                            Text(stats[i].$1, style: _ts(font, fontSize: 10,
+                                color: _grey, letterSpacing: 1.5,
+                                fontWeight: FontWeight.w600)),
+                          ]),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              if (record.date.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(record.date, style: _ts(font, fontSize: 11, color: _grey)),
+              ],
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── 8. 다크 ──────────────────────────────────────────────────────────────────
+// 어두운 배경 / 거리·시간·페이스·심박 2×2 균등 그리드
+class _DarkCard extends StatelessWidget {
+  final RunningRecord record;
+  final Color accent;
+  final String font;
+  final LabelLanguage language;
+  const _DarkCard({required this.record, required this.accent,
+      required this.font, required this.language});
+  String _t(String ko, String en) => language == LabelLanguage.korean ? ko : en;
+
+  @override
+  Widget build(BuildContext context) {
+    final dist = record.distance.replaceAll(RegExp(r'\s*km'), '').trim();
+    const bg = Color(0xFF1C1C1E);
+    const cardBg = Color(0xFF2C2C2E);
+    const textDim = Color(0xFF8E8E93);
+
+    final allStats = <(String, String)>[
+      if (dist.isNotEmpty)             (_t('거리', 'DIST'),   '$dist km'),
+      if (record.time.isNotEmpty)      (_t('시간', 'TIME'),   record.time),
+      if (record.pace.isNotEmpty)      (_t('평균 페이스', 'PACE'),  record.pace),
+      if (record.heartRate.isNotEmpty) (_t('평균 심박수', 'HR'),    record.heartRate),
+    ];
+
+    return AspectRatio(
+      aspectRatio: _cardRatio,
+      child: Container(
+        color: bg,
+        padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+                fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
+            const Spacer(),
+            if (record.date.isNotEmpty)
+              Text(record.date, style: _ts(font, fontSize: 11, color: textDim)),
+          ]),
+          const SizedBox(height: 16),
+          Container(height: 2, width: 40, color: accent),
+          const SizedBox(height: 20),
+
+          // 2열 그리드
+          Expanded(
+            child: GridView.count(
+              crossAxisCount: 2,
+              childAspectRatio: 1.9,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              physics: const NeverScrollableScrollPhysics(),
+              shrinkWrap: true,
+              children: allStats.map((s) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: cardBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text(s.$1, style: _ts(font, fontSize: 10, color: textDim,
+                      letterSpacing: 1.5, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(s.$2, style: _ts(font, fontSize: 18,
+                      fontWeight: FontWeight.w800, color: Colors.white)),
+                ]),
+              )).toList(),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
 }

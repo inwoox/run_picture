@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'dart:io';
+import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/running_record.dart';
 import '../models/overlay_style.dart';
@@ -38,7 +39,13 @@ class _EditorScreenState extends State<EditorScreen> {
   static const List<String> _fonts = [
     'SUIT', 'Roboto', 'Oswald', 'Montserrat', 'Raleway',
     'Bebas Neue', 'Anton', 'Russo One', 'Orbitron',
-    'Press Start 2P', 'Permanent Marker',
+    // 손글씨 / 붓글씨 (OFL 상업 허용)
+    'Nanum Pen Script',
+    'Nanum Brush Script',
+    'Black Han Sans',
+    'Gaegu',
+    'Caveat',
+    'Pacifico',
   ];
 
   static const Set<String> _localFonts = {'SUIT'};
@@ -150,29 +157,18 @@ class _EditorScreenState extends State<EditorScreen> {
     ));
   }
 
-  Future<Directory> _getSaveDirectory() async {
-    if (Platform.isAndroid) {
-      final dir = Directory('/storage/emulated/0/Pictures/RunningPhoto');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir;
-    } else {
-      final docs = await getApplicationDocumentsDirectory();
-      final dir = Directory('${docs.path}/RunningPhoto');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir;
-    }
-  }
-
   Future<void> _saveImage() async {
     showSavingDialog(context);
     try {
       final bytes = await _screenshotController.capture(pixelRatio: 3.0);
       if (bytes == null) { hideSavingDialog(context); _alert(_t('캡처 실패', 'Capture failed'), isError: true); return; }
-      final dir = await _getSaveDirectory();
-      final file = File('${dir.path}/running_${DateTime.now().millisecondsSinceEpoch}.png');
+      final tmp = await getTemporaryDirectory();
+      final file = File('${tmp.path}/rp_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(bytes);
+      await Gal.putImage(file.path, album: 'RunPicture');
+      await file.delete();
       hideSavingDialog(context);
-      _alert('${_t('저장 완료', 'Saved')}!\n${file.path}');
+      _alert(_t('사진첩에 저장되었습니다!', 'Saved to photo library!'));
     } catch (e) {
       hideSavingDialog(context);
       _alert('${_t('저장 실패', 'Save failed')}: $e', isError: true);

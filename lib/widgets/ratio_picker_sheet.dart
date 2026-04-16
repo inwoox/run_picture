@@ -26,7 +26,7 @@ class _RatioPickerSheet extends StatefulWidget {
 }
 
 class _RatioPickerSheetState extends State<_RatioPickerSheet> {
-  double _ratio = 9.0 / 16.0;
+  double _ratio = 4.0 / 5.0;
   Alignment _alignment = Alignment.center;
 
   void _onPanUpdate(DragUpdateDetails d, BoxConstraints constraints) {

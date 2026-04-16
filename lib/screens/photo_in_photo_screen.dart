@@ -6,46 +6,246 @@ import 'package:screenshot/screenshot.dart';
 import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/overlay_style.dart';
 import '../utils/save_util.dart';
 import '../widgets/ratio_picker_sheet.dart';
 
+// ── 삽입 사진 크롭 페이지 ────────────────────────────────────────────────────
+class _CropPage extends StatefulWidget {
+  final String imagePath;
+  const _CropPage({required this.imagePath});
+  @override
+  State<_CropPage> createState() => _CropPageState();
+}
+
+class _CropPageState extends State<_CropPage> {
+  // 정규화된 크롭 영역 (0~1)
+  double _l = 0.05, _t = 0.05, _r = 0.95, _b = 0.95;
+  final double _handleSize = 22;
+
+  // 이미지가 화면에서 실제 렌더링되는 Rect 계산 (BoxFit.contain)
+  Rect _imageRect(Size screen, Size imgSize) {
+    final sw = screen.width, sh = screen.height;
+    final iw = imgSize.width, ih = imgSize.height;
+    final scale = (sw / iw).clamp(0.0, sh / ih);
+    final rw = iw * scale, rh = ih * scale;
+    return Rect.fromLTWH((sw - rw) / 2, (sh - rh) / 2, rw, rh);
+  }
+
+  void _onHandleDrag(int corner, DragUpdateDetails d, Size screen, Size imgSize) {
+    final r = _imageRect(screen, imgSize);
+    final dx = d.delta.dx / r.width, dy = d.delta.dy / r.height;
+    setState(() {
+      const minSize = 0.05;
+      switch (corner) {
+        case 0: // 좌상
+          _l = (_l + dx).clamp(0.0, _r - minSize);
+          _t = (_t + dy).clamp(0.0, _b - minSize);
+        case 1: // 우상
+          _r = (_r + dx).clamp(_l + minSize, 1.0);
+          _t = (_t + dy).clamp(0.0, _b - minSize);
+        case 2: // 좌하
+          _l = (_l + dx).clamp(0.0, _r - minSize);
+          _b = (_b + dy).clamp(_t + minSize, 1.0);
+        case 3: // 우하
+          _r = (_r + dx).clamp(_l + minSize, 1.0);
+          _b = (_b + dy).clamp(_t + minSize, 1.0);
+      }
+    });
+  }
+
+  void _onRectDrag(DragUpdateDetails d, Size screen, Size imgSize) {
+    final r = _imageRect(screen, imgSize);
+    final dx = d.delta.dx / r.width, dy = d.delta.dy / r.height;
+    final w = _r - _l, h = _b - _t;
+    setState(() {
+      _l = (_l + dx).clamp(0.0, 1.0 - w);
+      _r = _l + w;
+      _t = (_t + dy).clamp(0.0, 1.0 - h);
+      _b = _t + h;
+    });
+  }
+
+  Future<void> _confirm(Size screen, Size imgSize) async {
+    final bytes = await File(widget.imagePath).readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null || !mounted) return;
+    final x = (_l * decoded.width).round();
+    final y = (_t * decoded.height).round();
+    final w = ((_r - _l) * decoded.width).round().clamp(1, decoded.width - x);
+    final h = ((_b - _t) * decoded.height).round().clamp(1, decoded.height - y);
+    final cropped = img.copyCrop(decoded, x: x, y: y, width: w, height: h);
+    final result = Uint8List.fromList(img.encodePng(cropped));
+    if (mounted) Navigator.pop(context, result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        leading: TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('취소', style: TextStyle(color: Colors.white70)),
+        ),
+        title: const Text('범위 선택', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+        centerTitle: true,
+        actions: [
+          TextButton(
+            onPressed: () async {
+              final s = MediaQuery.of(context).size;
+              final raw = await File(widget.imagePath).readAsBytes();
+              final dec = img.decodeImage(raw);
+              if (dec == null) return;
+              await _confirm(s, Size(dec.width.toDouble(), dec.height.toDouble()));
+            },
+            child: const Text('확인', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+      body: FutureBuilder<ui.Image>(
+        future: () async {
+          final bytes = await File(widget.imagePath).readAsBytes();
+          final codec = await ui.instantiateImageCodec(bytes);
+          return (await codec.getNextFrame()).image;
+        }(),
+        builder: (context, snap) {
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator(color: Colors.white));
+          final uiImg = snap.data!;
+          final imgSize = Size(uiImg.width.toDouble(), uiImg.height.toDouble());
+          return LayoutBuilder(builder: (context, constraints) {
+            final screen = Size(constraints.maxWidth, constraints.maxHeight);
+            final ir = _imageRect(screen, imgSize);
+            // 크롭 사각형 (픽셀 좌표)
+            final cl = ir.left + _l * ir.width;
+            final ct = ir.top + _t * ir.height;
+            final cr = ir.left + _r * ir.width;
+            final cb = ir.top + _b * ir.height;
+            final cropRect = Rect.fromLTRB(cl, ct, cr, cb);
+
+            Widget handle(int corner, double cx, double cy) {
+              return Positioned(
+                left: cx - _handleSize / 2,
+                top: cy - _handleSize / 2,
+                child: GestureDetector(
+                  onPanUpdate: (d) => _onHandleDrag(corner, d, screen, imgSize),
+                  child: Container(
+                    width: _handleSize, height: _handleSize,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 4)],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return Stack(children: [
+              // 이미지
+              Positioned.fill(child: Image.file(File(widget.imagePath), fit: BoxFit.contain)),
+              // 어두운 오버레이 (크롭 영역 외부)
+              Positioned.fill(
+                child: CustomPaint(painter: _CropOverlayPainter(cropRect)),
+              ),
+              // 크롭 영역 드래그 (이동)
+              Positioned(
+                left: cl, top: ct, width: cr - cl, height: cb - ct,
+                child: GestureDetector(
+                  onPanUpdate: (d) => _onRectDrag(d, screen, imgSize),
+                  child: Container(color: Colors.transparent),
+                ),
+              ),
+              // 코너 핸들
+              handle(0, cl, ct),
+              handle(1, cr, ct),
+              handle(2, cl, cb),
+              handle(3, cr, cb),
+            ]);
+          });
+        },
+      ),
+    );
+  }
+}
+
+class _CropOverlayPainter extends CustomPainter {
+  final Rect cropRect;
+  _CropOverlayPainter(this.cropRect);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dark = Paint()..color = Colors.black.withOpacity(0.55);
+    // 크롭 영역 제외 4개 사각형 어둡게
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, cropRect.top), dark);
+    canvas.drawRect(Rect.fromLTWH(0, cropRect.bottom, size.width, size.height - cropRect.bottom), dark);
+    canvas.drawRect(Rect.fromLTWH(0, cropRect.top, cropRect.left, cropRect.height), dark);
+    canvas.drawRect(Rect.fromLTWH(cropRect.right, cropRect.top, size.width - cropRect.right, cropRect.height), dark);
+    // 크롭 테두리
+    canvas.drawRect(cropRect, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 1.5);
+    // 3분할 가이드선
+    final guide = Paint()..color = Colors.white.withOpacity(0.35)..strokeWidth = 0.8;
+    for (int i = 1; i < 3; i++) {
+      final x = cropRect.left + cropRect.width * i / 3;
+      final y = cropRect.top + cropRect.height * i / 3;
+      canvas.drawLine(Offset(x, cropRect.top), Offset(x, cropRect.bottom), guide);
+      canvas.drawLine(Offset(cropRect.left, y), Offset(cropRect.right, y), guide);
+    }
+  }
+  @override
+  bool shouldRepaint(_CropOverlayPainter old) => old.cropRect != cropRect;
+}
+
 // ── 배경 자동 감지 (isolate): 테두리 픽셀 평균 밝기로 판단 ──────────────────
 bool _detectBgTask(Uint8List bytes) {
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return true;
+  // rNormalized(0.0~1.0)로 읽어 uint8/uint16 무관하게 0-255 환산
   int total = 0, count = 0;
   final w = decoded.width, h = decoded.height;
   for (int x = 0; x < w; x++) {
     for (final row in [0, h - 1]) {
       final p = decoded.getPixel(x, row);
-      total += (p.r.toInt() + p.g.toInt() + p.b.toInt()) ~/ 3;
+      total += ((p.rNormalized + p.gNormalized + p.bNormalized) / 3 * 255).round();
       count++;
     }
   }
   for (int y = 1; y < h - 1; y++) {
     for (final col in [0, w - 1]) {
       final p = decoded.getPixel(col, y);
-      total += (p.r.toInt() + p.g.toInt() + p.b.toInt()) ~/ 3;
+      total += ((p.rNormalized + p.gNormalized + p.bNormalized) / 3 * 255).round();
       count++;
     }
   }
-  return count > 0 ? (total / count) < 128 : true; // true=어두운배경
+  return count > 0 ? (total / count) < 128 : false;
 }
 
 // ── 배경 제거 (isolate) ─────────────────────────────────────────────────────
 Future<Uint8List> _bgRemoveTask(Map<String, dynamic> args) async {
   final bytes = args['bytes'] as Uint8List;
   final threshold = args['threshold'] as int;
-  final removeDark = args['removeDark'] as bool; // true=어두운배경, false=밝은배경
+  final removeDark = args['removeDark'] as bool;
   final decoded = img.decodeImage(bytes);
   if (decoded == null) return bytes;
   final result = img.Image(width: decoded.width, height: decoded.height, numChannels: 4);
+  // JPEG는 alpha 채널 없음(numChannels==3) → 모든 픽셀 불투명 처리
+  // PNG·이미 처리된 이미지는 alpha 존재 시 투명 픽셀 보존
+  final hasAlpha = decoded.numChannels >= 4;
   for (int y = 0; y < decoded.height; y++) {
     for (int x = 0; x < decoded.width; x++) {
       final pixel = decoded.getPixel(x, y);
-      final r = pixel.r.toInt(); final g = pixel.g.toInt(); final b = pixel.b.toInt();
+      // rNormalized(0.0~1.0)으로 읽어 uint8/uint16 모두 0-255 환산
+      final r = (pixel.rNormalized * 255).round();
+      final g = (pixel.gNormalized * 255).round();
+      final b = (pixel.bNormalized * 255).round();
+      // alpha 채널이 있는 이미지만 투명 픽셀 보존
+      if (hasAlpha && (pixel.aNormalized * 255).round() < 128) {
+        result.setPixelRgba(x, y, 0, 0, 0, 0);
+        continue;
+      }
       final brightness = (r + g + b) ~/ 3;
       final shouldRemove = removeDark ? brightness < threshold : brightness > (255 - threshold);
       if (shouldRemove) {
@@ -67,6 +267,7 @@ class _ErasePainter extends CustomPainter {
   final List<Offset> currentStroke;
   final Rect? currentRect;
   final double radius;
+  final bool invertColors;
 
   const _ErasePainter({
     required this.image,
@@ -74,6 +275,7 @@ class _ErasePainter extends CustomPainter {
     required this.currentStroke,
     required this.currentRect,
     required this.radius,
+    this.invertColors = false,
   });
 
   @override
@@ -81,8 +283,16 @@ class _ErasePainter extends CustomPainter {
     canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
 
     final src = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
-    canvas.drawImageRect(image, src, Rect.fromLTWH(0, 0, size.width, size.height),
-        Paint()..filterQuality = FilterQuality.high);
+    final imagePaint = Paint()..filterQuality = FilterQuality.high;
+    if (invertColors) {
+      imagePaint.colorFilter = const ColorFilter.matrix([
+        -1, 0, 0, 0, 255,
+         0,-1, 0, 0, 255,
+         0, 0,-1, 0, 255,
+         0, 0, 0, 1,   0,
+      ]);
+    }
+    canvas.drawImageRect(image, src, Rect.fromLTWH(0, 0, size.width, size.height), imagePaint);
 
     final brushPaint = Paint()
       ..blendMode = BlendMode.dstOut
@@ -141,7 +351,7 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
 
   XFile? _bgImage;
   XFile? _insertImage;
-  double _bgRatio = 9.0 / 16.0;
+  double _bgRatio = 4.0 / 5.0;
   Alignment _bgAlignment = Alignment.center;
   late LabelLanguage _language;
 
@@ -161,7 +371,7 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   // 지우개
   bool _eraseMode = false;
   _EraseToolType _eraseToolType = _EraseToolType.brush;
-  double _eraseRadius = 20;
+  double _eraseRadius = 5;
   List<dynamic> _eraseHistory = []; // List<Offset>=브러시, Rect=사각형
   List<Offset> _currentStroke = [];
   Rect? _currentRect;
@@ -210,19 +420,38 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
 
   Future<void> _pickInsert() async {
     final image = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (image != null) {
-      setState(() {
-        _insertImage = image;
-        _initialized = false;
-        _removeBackground = false;
-        _processedBytes = null;
-        _eraseHistory = [];
-        _currentStroke = [];
-        _currentRect = null;
-        _rectStart = null;
-        _invertColors = false;
-        _insertUiImage = null;
-      });
+    if (image == null || !mounted) return;
+
+    // 크롭 페이지로 이동 (취소 시 null 반환)
+    final croppedBytes = await Navigator.push<Uint8List?>(
+      context,
+      MaterialPageRoute(builder: (_) => _CropPage(imagePath: image.path)),
+    );
+    if (!mounted) return;
+
+    setState(() {
+      _insertImage = image;
+      _initialized = false;
+      _removeBackground = false;
+      _processedBytes = null;
+      _eraseHistory = [];
+      _currentStroke = [];
+      _currentRect = null;
+      _rectStart = null;
+      _invertColors = false;
+      _removeDark = null; // 새 이미지 선택 시 배경 종류 자동으로 초기화
+      _insertUiImage = null;
+    });
+
+    if (croppedBytes != null) {
+      // 크롭된 바이트를 임시 파일로 저장 후 ui.Image 로드
+      final tmp = await getTemporaryDirectory();
+      final tmpFile = File('${tmp.path}/crop_${DateTime.now().millisecondsSinceEpoch}.png');
+      await tmpFile.writeAsBytes(croppedBytes);
+      setState(() => _insertImage = XFile(tmpFile.path));
+      await _loadUiImageFromBytes(croppedBytes);
+    } else {
+      // 크롭 취소 → 원본 사용
       await _loadUiImageFromFile(image.path);
     }
   }
@@ -260,29 +489,18 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
 
   void _resetErase() => setState(() { _eraseHistory = []; _currentStroke = []; _currentRect = null; _rectStart = null; });
 
-  Future<Directory> _getSaveDirectory() async {
-    if (Platform.isAndroid) {
-      final dir = Directory('/storage/emulated/0/Pictures/RunningPhoto');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir;
-    } else {
-      final docs = await getApplicationDocumentsDirectory();
-      final dir = Directory('${docs.path}/RunningPhoto');
-      if (!await dir.exists()) await dir.create(recursive: true);
-      return dir;
-    }
-  }
-
   Future<void> _saveImage() async {
     showSavingDialog(context);
     try {
       final bytes = await _screenshotController.capture(pixelRatio: 5.0);
       if (bytes == null) { hideSavingDialog(context); _alert(_t('캡처 실패', 'Capture failed'), isError: true); return; }
-      final dir = await _getSaveDirectory();
-      final file = File('${dir.path}/pip_${DateTime.now().millisecondsSinceEpoch}.png');
+      final tmp = await getTemporaryDirectory();
+      final file = File('${tmp.path}/rp_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(bytes);
+      await Gal.putImage(file.path, album: 'RunPicture');
+      await file.delete();
       hideSavingDialog(context);
-      _alert('${_t('저장 완료', 'Saved')}!\n${file.path}');
+      _alert(_t('사진첩에 저장되었습니다!', 'Saved to photo library!'));
     } catch (e) {
       hideSavingDialog(context);
       _alert('${_t('저장 실패', 'Save failed')}: $e', isError: true);
@@ -304,7 +522,7 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   Widget _buildInsertWidget() {
     if (_insertUiImage == null) return const SizedBox();
     final imgH = _insertWidth * _insertUiImage!.height / _insertUiImage!.width;
-    final painted = SizedBox(
+    return SizedBox(
       width: _insertWidth,
       height: imgH,
       child: CustomPaint(
@@ -315,18 +533,9 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
           currentStroke: _currentStroke,
           currentRect: _currentRect,
           radius: _eraseRadius,
+          invertColors: _invertColors,
         ),
       ),
-    );
-    if (!_invertColors) return painted;
-    return ColorFiltered(
-      colorFilter: const ColorFilter.matrix([
-        -1, 0, 0, 0, 255,
-         0,-1, 0, 0, 255,
-         0, 0,-1, 0, 255,
-         0, 0, 0, 1,   0,
-      ]),
-      child: painted,
     );
   }
 
@@ -364,145 +573,17 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
         children: [
           // ── 사진 선택 ──
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            padding: EdgeInsets.fromLTRB(16, bothSelected ? 4 : 16, 16, 0),
             child: Row(children: [
               Expanded(child: _pickerCard(image: _bgImage, label: _t('배경 사진', 'Background'),
-                  icon: Icons.add_photo_alternate_rounded, onTap: _pickBg)),
+                  icon: Icons.add_photo_alternate_rounded, onTap: _pickBg,
+                  height: bothSelected ? 52 : 110)),
               const SizedBox(width: 12),
               Expanded(child: _pickerCard(image: _insertImage, label: _t('삽입할 사진', 'Insert Photo'),
-                  icon: Icons.photo_library_rounded, onTap: _pickInsert)),
+                  icon: Icons.photo_library_rounded, onTap: _pickInsert,
+                  height: bothSelected ? 52 : 110)),
             ]),
           ),
-
-          // ── 편집 도구 (삽입 사진 선택 시) ──
-          if (_insertImage != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 6, offset: const Offset(0, 2))],
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  // 배경 제거 토글
-                  Row(children: [
-                    const Icon(Icons.auto_fix_high_rounded, size: 15, color: Color(0xFF1C1C1E)),
-                    const SizedBox(width: 6),
-                    Text(_t('배경 제거', 'Remove BG'),
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
-                    const Spacer(),
-                    if (_isProcessingBg)
-                      const SizedBox(width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1C1C1E)))
-                    else
-                      Switch(
-                        value: _removeBackground,
-                        activeColor: const Color(0xFF1C1C1E),
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        onChanged: (v) => v ? _applyBgRemoval() : _disableBgRemoval(),
-                      ),
-                  ]),
-                  // 배경 종류 선택 (항상 표시)
-                  const SizedBox(height: 6),
-                  Row(children: [
-                    _bgTypeToggle(_t('자동', 'Auto'), null),
-                    const SizedBox(width: 8),
-                    _bgTypeToggle(_t('어두운 배경', 'Dark BG'), true),
-                    const SizedBox(width: 8),
-                    _bgTypeToggle(_t('밝은 배경', 'Light BG'), false),
-                  ]),
-                  if (_removeBackground) ...[
-                    const SizedBox(height: 4),
-                    Row(children: [
-                      Text(_t('임계값', 'Threshold'),
-                          style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
-                      Expanded(child: _thinSlider(_bgThreshold, 10, 180, (v) {
-                        setState(() => _bgThreshold = v);
-                      }, onEnd: (_) { if (_removeBackground) _applyBgRemoval(); })),
-                      SizedBox(width: 28, child: Text(_bgThreshold.toInt().toString(),
-                          style: const TextStyle(fontSize: 11, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600))),
-                    ]),
-                  ],
-
-                  const Divider(height: 16, color: Color(0xFFEEEEEE)),
-
-                  // 색상 반전 토글
-                  Row(children: [
-                    const Icon(Icons.invert_colors_rounded, size: 15, color: Color(0xFF1C1C1E)),
-                    const SizedBox(width: 6),
-                    Text(_t('색상 반전', 'Invert Colors'),
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
-                    const Spacer(),
-                    Switch(
-                      value: _invertColors,
-                      activeThumbColor: const Color(0xFF1C1C1E),
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onChanged: (v) => setState(() => _invertColors = v),
-                    ),
-                  ]),
-
-                  const Divider(height: 16, color: Color(0xFFEEEEEE)),
-
-                  // 지우개 토글
-                  Row(children: [
-                    const Icon(Icons.draw_rounded, size: 15, color: Color(0xFF1C1C1E)),
-                    const SizedBox(width: 6),
-                    Text(_t('선택 지우기', 'Selective Erase'),
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
-                    const Spacer(),
-                    Switch(
-                      value: _eraseMode,
-                      activeColor: const Color(0xFF1C1C1E),
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onChanged: (v) => setState(() => _eraseMode = v),
-                    ),
-                  ]),
-                  if (_eraseMode) ...[
-                    // 도구 선택
-                    const SizedBox(height: 4),
-                    Row(children: [
-                      _eraseToolToggle(Icons.brush_rounded, _t('브러시', 'Brush'), _EraseToolType.brush),
-                      const SizedBox(width: 8),
-                      _eraseToolToggle(Icons.crop_square_rounded, _t('사각형', 'Rect'), _EraseToolType.rect),
-                    ]),
-                    const SizedBox(height: 4),
-                    // 브러시 크기 (브러시 모드일 때만)
-                    if (_eraseToolType == _EraseToolType.brush)
-                      Row(children: [
-                        Text(_t('브러시 크기', 'Size'),
-                            style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
-                        Expanded(child: _thinSlider(_eraseRadius, 5, 60, (v) => setState(() => _eraseRadius = v))),
-                        SizedBox(width: 28, child: Text(_eraseRadius.toInt().toString(),
-                            style: const TextStyle(fontSize: 11, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600))),
-                      ]),
-                    Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                      TextButton.icon(
-                        onPressed: _eraseHistory.isNotEmpty ? _undoErase : null,
-                        icon: const Icon(Icons.undo_rounded, size: 14),
-                        label: Text(_t('실행 취소', 'Undo'), style: const TextStyle(fontSize: 12)),
-                        style: TextButton.styleFrom(foregroundColor: const Color(0xFF1C1C1E),
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
-                      ),
-                      TextButton.icon(
-                        onPressed: _eraseHistory.isNotEmpty ? _resetErase : null,
-                        icon: const Icon(Icons.refresh_rounded, size: 14),
-                        label: Text(_t('초기화', 'Reset'), style: const TextStyle(fontSize: 12)),
-                        style: TextButton.styleFrom(foregroundColor: const Color(0xFF1C1C1E),
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
-                      ),
-                    ]),
-                    Text(
-                      _eraseToolType == _EraseToolType.brush
-                          ? _t('사진 위에서 드래그하여 지울 영역 선택', 'Drag on photo to erase')
-                          : _t('드래그로 지울 사각형 영역 선택', 'Drag to select rect area'),
-                      style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
-                    ),
-                  ],
-                ]),
-              ),
-            ),
 
           // ── 프리뷰 ──
           Expanded(
@@ -616,18 +697,136 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                   ),
           ),
 
-          if (bothSelected && !_eraseMode)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-              child: Text(
-                _t('드래그로 위치 조정 • 두 손가락으로 크기 조절', 'Drag to move • Pinch to resize'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 11),
+          // ── 편집 도구 (삽입 사진 선택 시, 프리뷰 아래 스크롤 가능) ──
+          if (_insertImage != null)
+            SizedBox(
+              height: (_bgRatio - 9.0 / 16.0).abs() < 0.001 ? 130 : 200,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 6, offset: const Offset(0, 2))],
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      // 배경 제거 토글
+                      Row(children: [
+                        const Icon(Icons.auto_fix_high_rounded, size: 15, color: Color(0xFF1C1C1E)),
+                        const SizedBox(width: 6),
+                        Text(_t('배경 제거', 'Remove BG'),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+                        const Spacer(),
+                        if (_isProcessingBg)
+                          const SizedBox(width: 18, height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1C1C1E)))
+                        else
+                          Switch(
+                            value: _removeBackground,
+                            activeColor: const Color(0xFF1C1C1E),
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            onChanged: (v) => v ? _applyBgRemoval() : _disableBgRemoval(),
+                          ),
+                      ]),
+                      Row(children: [
+                        _bgTypeToggle(_t('자동', 'Auto'), null),
+                        const SizedBox(width: 8),
+                        _bgTypeToggle(_t('어두운 배경', 'Dark BG'), true),
+                        const SizedBox(width: 8),
+                        _bgTypeToggle(_t('밝은 배경', 'Light BG'), false),
+                      ]),
+                      if (_removeBackground) ...[
+                        const SizedBox(height: 4),
+                        Row(children: [
+                          Text(_t('임계값', 'Threshold'),
+                              style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+                          Expanded(child: _thinSlider(_bgThreshold, 10, 180, (v) {
+                            setState(() => _bgThreshold = v);
+                          }, onEnd: (_) { if (_removeBackground) _applyBgRemoval(); })),
+                          SizedBox(width: 28, child: Text(_bgThreshold.toInt().toString(),
+                              style: const TextStyle(fontSize: 11, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600))),
+                        ]),
+                      ],
+                      const Divider(height: 14, color: Color(0xFFEEEEEE)),
+                      // 색상 반전 토글
+                      Row(children: [
+                        const Icon(Icons.invert_colors_rounded, size: 15, color: Color(0xFF1C1C1E)),
+                        const SizedBox(width: 6),
+                        Text(_t('색상 반전', 'Invert Colors'),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+                        const Spacer(),
+                        Switch(
+                          value: _invertColors,
+                          activeThumbColor: const Color(0xFF1C1C1E),
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          onChanged: (v) => setState(() => _invertColors = v),
+                        ),
+                      ]),
+                      const Divider(height: 14, color: Color(0xFFEEEEEE)),
+                      // 지우개 토글
+                      Row(children: [
+                        const Icon(Icons.draw_rounded, size: 15, color: Color(0xFF1C1C1E)),
+                        const SizedBox(width: 6),
+                        Text(_t('선택 지우기', 'Selective Erase'),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+                        const Spacer(),
+                        Switch(
+                          value: _eraseMode,
+                          activeColor: const Color(0xFF1C1C1E),
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          onChanged: (v) => setState(() => _eraseMode = v),
+                        ),
+                      ]),
+                      if (_eraseMode) ...[
+                        const SizedBox(height: 4),
+                        Row(children: [
+                          _eraseToolToggle(Icons.brush_rounded, _t('브러시', 'Brush'), _EraseToolType.brush),
+                          const SizedBox(width: 8),
+                          _eraseToolToggle(Icons.crop_square_rounded, _t('사각형', 'Rect'), _EraseToolType.rect),
+                        ]),
+                        if (_eraseToolType == _EraseToolType.brush) ...[
+                          const SizedBox(height: 4),
+                          Row(children: [
+                            Text(_t('브러시 크기', 'Size'),
+                                style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+                            Expanded(child: _thinSlider(_eraseRadius, 5, 10, (v) => setState(() => _eraseRadius = v))),
+                            SizedBox(width: 28, child: Text(_eraseRadius.toInt().toString(),
+                                style: const TextStyle(fontSize: 11, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600))),
+                          ]),
+                        ],
+                        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                          TextButton.icon(
+                            onPressed: _eraseHistory.isNotEmpty ? _undoErase : null,
+                            icon: const Icon(Icons.undo_rounded, size: 14),
+                            label: Text(_t('실행 취소', 'Undo'), style: const TextStyle(fontSize: 12)),
+                            style: TextButton.styleFrom(foregroundColor: const Color(0xFF1C1C1E),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+                          ),
+                          TextButton.icon(
+                            onPressed: _eraseHistory.isNotEmpty ? _resetErase : null,
+                            icon: const Icon(Icons.refresh_rounded, size: 14),
+                            label: Text(_t('초기화', 'Reset'), style: const TextStyle(fontSize: 12)),
+                            style: TextButton.styleFrom(foregroundColor: const Color(0xFF1C1C1E),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+                          ),
+                        ]),
+                        Text(
+                          _eraseToolType == _EraseToolType.brush
+                              ? _t('사진 위에서 드래그하여 지울 영역 선택', 'Drag on photo to erase')
+                              : _t('드래그로 지울 사각형 영역 선택', 'Drag to select rect area'),
+                          style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+                        ),
+                      ],
+                    ]),
+                  ),
+                ),
               ),
             ),
 
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 6, 16, 20),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -636,7 +835,7 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                   backgroundColor: const Color(0xFF1C1C1E),
                   disabledBackgroundColor: const Color(0xFFCCCCCC),
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   elevation: 0,
                 ),
@@ -710,11 +909,11 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   }
 
   Widget _pickerCard({required XFile? image, required String label,
-      required IconData icon, required VoidCallback onTap}) {
+      required IconData icon, required VoidCallback onTap, double height = 110}) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: 110,
+        height: height,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
@@ -722,16 +921,18 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
         ),
         child: image == null
             ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Container(width: 40, height: 40,
+                Container(width: 36, height: 36,
                     decoration: BoxDecoration(color: const Color(0xFFF0F0F0), borderRadius: BorderRadius.circular(12)),
-                    child: Icon(icon, color: const Color(0xFF1C1C1E), size: 22)),
-                const SizedBox(height: 8),
-                Text(label, style: const TextStyle(color: Color(0xFF1C1C1E),
-                    fontWeight: FontWeight.w600, fontSize: 12), textAlign: TextAlign.center),
+                    child: Icon(icon, color: const Color(0xFF1C1C1E), size: 20)),
+                if (height >= 100) ...[
+                  const SizedBox(height: 8),
+                  Text(label, style: const TextStyle(color: Color(0xFF1C1C1E),
+                      fontWeight: FontWeight.w600, fontSize: 12), textAlign: TextAlign.center),
+                ],
               ])
             : Stack(children: [
                 ClipRRect(borderRadius: BorderRadius.circular(14),
-                    child: Image.file(File(image.path), fit: BoxFit.cover, width: double.infinity, height: 110)),
+                    child: Image.file(File(image.path), fit: BoxFit.cover, width: double.infinity, height: height)),
                 Positioned(bottom: 6, right: 6,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),

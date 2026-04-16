@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import '../models/running_record.dart';
 import '../models/overlay_style.dart';
 import '../services/ocr_service.dart';
 import 'editor_screen.dart';
 import '../widgets/ratio_picker_sheet.dart';
+import '../widgets/ocr_confirm_sheet.dart';
 
 class RecordPhotoScreen extends StatefulWidget {
   final LabelLanguage language;
@@ -53,8 +53,24 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
     try {
       final record = await OcrService.extractFromImage(_captureImage!.path);
       if (!mounted) return;
+      // 임시 디버그 팝업 (원인 분석용)
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('OCR Debug', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+          content: SingleChildScrollView(
+            child: Text(OcrService.lastDebugLog, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('닫기'))],
+        ),
+      );
+      if (!mounted) return;
+      // OCR 결과 확인·수정 시트
+      final confirmed = await showOcrConfirmSheet(context, record, _language);
+      if (!mounted) return;
+      if (confirmed == null) return; // 취소
       Navigator.push(context, MaterialPageRoute(
-        builder: (_) => EditorScreen(image: _selectedImage!, record: record,
+        builder: (_) => EditorScreen(image: _selectedImage!, record: confirmed,
             language: _language, ratio: _selectedRatio, alignment: _selectedAlignment),
       ));
     } catch (e) {

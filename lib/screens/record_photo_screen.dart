@@ -53,18 +53,6 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
     try {
       final record = await OcrService.extractFromImage(_captureImage!.path);
       if (!mounted) return;
-      // 임시 디버그 팝업 (원인 분석용)
-      await showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('OCR Debug', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-          content: SingleChildScrollView(
-            child: Text(OcrService.lastDebugLog, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
-          ),
-          actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('닫기'))],
-        ),
-      );
-      if (!mounted) return;
       // OCR 결과 확인·수정 시트
       final confirmed = await showOcrConfirmSheet(context, record, _language);
       if (!mounted) return;
@@ -97,9 +85,14 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
           icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1C1C1E), size: 20),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('RUN PICTURE',
-            style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
-                fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
+        title: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('RUN PICTURE',
+              style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
+                  fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
+          Text(_t('기록 사진 생성', 'Create Record Photo'),
+              style: const TextStyle(fontFamily: 'SUIT', color: Color(0xFF8E8E93),
+                  fontWeight: FontWeight.w500, fontSize: 11, letterSpacing: 0)),
+        ]),
         centerTitle: true,
         actions: [
           Padding(
@@ -117,109 +110,46 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Row(children: [
+              Expanded(child: _pickerCard(image: _selectedImage, label: _t('배경 사진', 'Background Photo'),
+                  icon: Icons.add_photo_alternate_rounded, onTap: _pickPhoto)),
+              const SizedBox(width: 12),
+              Expanded(child: _pickerCard(image: _captureImage, label: _t('러닝 기록 사진', 'Running Record'),
+                  icon: Icons.document_scanner_rounded, onTap: _pickCaptureImage)),
+            ]),
+            const SizedBox(height: 20),
             Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))],
               ),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Icon(Icons.info_outline_rounded, size: 16, color: Color(0xFF8E8E93)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_t('이렇게 사용하세요', 'How to use'),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                        color: Color(0xFF1C1C1E))),
+                const SizedBox(height: 12),
+                _guideStep('1', _t('배경 사진 선택', 'Select background photo'),
+                    _t('기록을 담고 싶은 배경 사진을 선택하세요', 'Choose a photo to use as the background')),
+                _guideStep('2', _t('러닝 기록 사진 선택', 'Select running record photo'),
                     _t(
-                      '배경 사진과 러닝 기록 캡처 사진을 선택하고 기록 사진 생성을 누르면 기록 관련 텍스트가 배경 사진에 추가됩니다.',
-                      'Select a background photo and running record capture, then tap Create to overlay your running stats on the photo.',
-                    ),
-                    style: const TextStyle(fontSize: 12, color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600, height: 1.5),
+                      '러닝 앱의 기록 화면 스크린샷을 선택하세요\n값이 있는 부분만 캡처하여 첨부해야 인식률이 높습니다\n(인식이 안되는 경우, 수동으로 페이스 등 입력 가능)',
+                      'Choose a screenshot from your running app\nCrop to the stats area only for better recognition\nYou can enter values manually if recognition fails',
+                    )),
+                Padding(
+                  padding: const EdgeInsets.only(left: 34, bottom: 14),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.asset('assets/sample_running.png', width: double.infinity, fit: BoxFit.fitWidth),
                   ),
                 ),
+                _guideStep('3', _t('기록 사진 생성 탭', 'Tap Create Record Photo'),
+                    _t('버튼을 누르면 OCR로 기록을 자동 인식합니다', 'Tap the button to auto-extract stats via OCR')),
+                _guideStep('4', _t('텍스트 편집 후 저장', 'Edit text and save'),
+                    _t('인식된 기록을 확인·수정하고 사진에 추가해 저장하세요', 'Review, edit, and save your stats onto the photo'),
+                    isLast: true),
               ]),
-            ),
-            const SizedBox(height: 16),
-            _sectionLabel(_t('배경 사진', 'Background Photo')),
-            GestureDetector(
-              onTap: _pickPhoto,
-              child: Container(
-                height: 200,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 4))],
-                ),
-                child: _selectedImage == null
-                    ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Container(
-                          width: 52, height: 52,
-                          decoration: BoxDecoration(color: const Color(0xFFF0F0F0), borderRadius: BorderRadius.circular(14)),
-                          child: const Icon(Icons.add_photo_alternate_rounded, color: Color(0xFF1C1C1E), size: 28),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(_t('배경 사진 선택', 'Select Background Photo'),
-                            style: const TextStyle(color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600, fontSize: 15)),
-                      ])
-                    : Stack(children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Image.file(File(_selectedImage!.path), fit: BoxFit.cover, width: double.infinity, height: 200),
-                        ),
-                        Positioned(bottom: 10, right: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
-                            child: Row(mainAxisSize: MainAxisSize.min, children: [
-                              const Icon(Icons.edit, color: Colors.white, size: 14),
-                              const SizedBox(width: 4),
-                              Text(_t('변경', 'Change'), style: const TextStyle(color: Colors.white, fontSize: 12)),
-                            ]),
-                          ),
-                        ),
-                      ]),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            _sectionLabel(_t('러닝 기록 캡처', 'Running Capture')),
-            GestureDetector(
-              onTap: _pickCaptureImage,
-              child: Container(
-                height: 200,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 4))],
-                ),
-                child: _captureImage == null
-                    ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Container(
-                          width: 52, height: 52,
-                          decoration: BoxDecoration(color: const Color(0xFFF0F0F0), borderRadius: BorderRadius.circular(14)),
-                          child: const Icon(Icons.document_scanner_rounded, color: Color(0xFF1C1C1E), size: 28),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(_t('러닝 기록 캡처 선택', 'Select Running Record Capture'),
-                            style: const TextStyle(color: Color(0xFF1C1C1E), fontWeight: FontWeight.w600, fontSize: 15)),
-                      ])
-                    : Stack(children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Image.file(File(_captureImage!.path), fit: BoxFit.cover, width: double.infinity, height: 200),
-                        ),
-                        Positioned(bottom: 10, right: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
-                            child: Row(mainAxisSize: MainAxisSize.min, children: [
-                              const Icon(Icons.edit, color: Colors.white, size: 14),
-                              const SizedBox(width: 4),
-                              Text(_t('변경', 'Change'), style: const TextStyle(color: Colors.white, fontSize: 12)),
-                            ]),
-                          ),
-                        ),
-                      ]),
-              ),
             ),
             const SizedBox(height: 24),
 
@@ -246,10 +176,74 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
     );
   }
 
-  Widget _sectionLabel(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Text(text, style: const TextStyle(color: Color(0xFF1C1C1E), fontSize: 15, fontWeight: FontWeight.w700)),
-  );
+  Widget _pickerCard({required XFile? image, required String label,
+      required IconData icon, required VoidCallback onTap, double height = 110}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 3))],
+        ),
+        child: image == null
+            ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Container(width: 36, height: 36,
+                    decoration: BoxDecoration(color: const Color(0xFFF0F0F0), borderRadius: BorderRadius.circular(12)),
+                    child: Icon(icon, color: const Color(0xFF1C1C1E), size: 20)),
+                if (height >= 100) ...[
+                  const SizedBox(height: 8),
+                  Text(label, style: const TextStyle(color: Color(0xFF1C1C1E),
+                      fontWeight: FontWeight.w600, fontSize: 12), textAlign: TextAlign.center),
+                ],
+              ])
+            : Stack(children: [
+                ClipRRect(borderRadius: BorderRadius.circular(14),
+                    child: Image.file(File(image.path), fit: BoxFit.cover, width: double.infinity, height: height)),
+                Positioned(bottom: 6, right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.edit, color: Colors.white, size: 11),
+                      SizedBox(width: 3),
+                      Text('변경', style: TextStyle(color: Colors.white, fontSize: 10)),
+                    ]),
+                  ),
+                ),
+              ]),
+      ),
+    );
+  }
+
+  Widget _guideStep(String num, String title, String desc, {bool isLast = false}) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(children: [
+        Container(
+          width: 22, height: 22,
+          decoration: const BoxDecoration(color: Color(0xFF1C1C1E), shape: BoxShape.circle),
+          child: Center(child: Text(num, style: const TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white))),
+        ),
+        if (!isLast)
+          Container(width: 1, height: 28, color: const Color(0xFFE5E5EA),
+              margin: const EdgeInsets.symmetric(vertical: 2)),
+      ]),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontSize: 13,
+                fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+            const SizedBox(height: 2),
+            Text(desc, style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93), height: 1.4)),
+          ]),
+        ),
+      ),
+    ]);
+  }
 
   Widget _langToggle(String label, LabelLanguage lang) {
     final selected = _language == lang;

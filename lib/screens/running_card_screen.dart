@@ -137,9 +137,14 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
           icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1C1C1E), size: 20),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('RUN PICTURE',
-            style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
-                fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
+        title: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('RUN PICTURE',
+              style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
+                  fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
+          Text(_t('러닝 카드 생성', 'Running Card'),
+              style: const TextStyle(fontFamily: 'SUIT', color: Color(0xFF8E8E93),
+                  fontWeight: FontWeight.w500, fontSize: 11, letterSpacing: 0)),
+        ]),
         centerTitle: true,
         actions: [
           Padding(
@@ -226,7 +231,7 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
                     child: const Icon(Icons.document_scanner_rounded,
                         color: Color(0xFF1C1C1E), size: 26)),
                 const SizedBox(height: 10),
-                Text(_t('러닝 기록 캡처 선택', 'Select Running Capture'),
+                Text(_t('러닝 기록 사진', 'Running Record Photo'),
                     style: const TextStyle(color: Color(0xFF1C1C1E),
                         fontWeight: FontWeight.w600, fontSize: 14)),
               ])
@@ -388,8 +393,18 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
                 color: Color(0xFF1C1C1E))),
         const SizedBox(height: 12),
-        _guideStep('1', _t('러닝 기록 캡처 선택', 'Select running capture'),
-            _t('러닝 앱의 기록 화면 스크린샷을 선택하세요', 'Choose a screenshot from your running app')),
+        _guideStep('1', _t('러닝 기록 사진 선택', 'Select running record photo'),
+            _t(
+              '러닝 앱의 기록 화면 스크린샷을 선택하세요\n값이 있는 부분만 캡처하여 첨부해야 인식률이 높습니다\n(인식이 안되는 경우, 수동으로 페이스 등 입력 가능)',
+              'Choose a screenshot from your running app\nCrop to the stats area only for better recognition\nYou can enter values manually if recognition fails',
+            )),
+        Padding(
+          padding: const EdgeInsets.only(left: 34, bottom: 14),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.asset('assets/sample_running.png', width: double.infinity, fit: BoxFit.fitWidth),
+          ),
+        ),
         _guideStep('2', _t('템플릿 선택', 'Choose a template'),
             _t('미니멀, 센터, 헤드라인 등 원하는 스타일을 선택하세요', 'Pick a style: Minimal, Center, Headline, etc.')),
         _guideStep('3', _t('색상 · 폰트 변경', 'Customize color & font'),

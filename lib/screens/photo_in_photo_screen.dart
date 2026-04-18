@@ -14,8 +14,8 @@ import '../widgets/ratio_picker_sheet.dart';
 
 // ── 삽입 사진 크롭 페이지 ────────────────────────────────────────────────────
 class _CropPage extends StatefulWidget {
-  final String imagePath;
-  const _CropPage({required this.imagePath});
+  final Uint8List imageBytes;
+  const _CropPage({required this.imageBytes});
   @override
   State<_CropPage> createState() => _CropPageState();
 }
@@ -69,8 +69,7 @@ class _CropPageState extends State<_CropPage> {
   }
 
   Future<void> _confirm(Size screen, Size imgSize) async {
-    final bytes = await File(widget.imagePath).readAsBytes();
-    final decoded = img.decodeImage(bytes);
+    final decoded = img.decodeImage(widget.imageBytes);
     if (decoded == null || !mounted) return;
     final x = (_l * decoded.width).round();
     final y = (_t * decoded.height).round();
@@ -98,8 +97,7 @@ class _CropPageState extends State<_CropPage> {
           TextButton(
             onPressed: () async {
               final s = MediaQuery.of(context).size;
-              final raw = await File(widget.imagePath).readAsBytes();
-              final dec = img.decodeImage(raw);
+              final dec = img.decodeImage(widget.imageBytes);
               if (dec == null) return;
               await _confirm(s, Size(dec.width.toDouble(), dec.height.toDouble()));
             },
@@ -109,8 +107,7 @@ class _CropPageState extends State<_CropPage> {
       ),
       body: FutureBuilder<ui.Image>(
         future: () async {
-          final bytes = await File(widget.imagePath).readAsBytes();
-          final codec = await ui.instantiateImageCodec(bytes);
+          final codec = await ui.instantiateImageCodec(widget.imageBytes);
           return (await codec.getNextFrame()).image;
         }(),
         builder: (context, snap) {
@@ -147,7 +144,7 @@ class _CropPageState extends State<_CropPage> {
 
             return Stack(children: [
               // 이미지
-              Positioned.fill(child: Image.file(File(widget.imagePath), fit: BoxFit.contain)),
+              Positioned.fill(child: Image.memory(widget.imageBytes, fit: BoxFit.contain)),
               // 어두운 오버레이 (크롭 영역 외부)
               Positioned.fill(
                 child: CustomPaint(painter: _CropOverlayPainter(cropRect)),
@@ -419,18 +416,29 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   }
 
   Future<void> _pickInsert() async {
-    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    final image = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 100);
     if (image == null || !mounted) return;
+
+    // File()로 직접 읽어야 simulator에서 objective_c 오류 우회
+    final originalBytes = await File(image.path).readAsBytes();
+    if (!mounted) return;
 
     // 크롭 페이지로 이동 (취소 시 null 반환)
     final croppedBytes = await Navigator.push<Uint8List?>(
       context,
-      MaterialPageRoute(builder: (_) => _CropPage(imagePath: image.path)),
+      MaterialPageRoute(builder: (_) => _CropPage(imageBytes: originalBytes)),
     );
     if (!mounted) return;
 
+    final bytes = croppedBytes ?? originalBytes;
+
+    // 임시 파일로 저장
+    final tmp = await getTemporaryDirectory();
+    final tmpFile = File('${tmp.path}/insert_${DateTime.now().millisecondsSinceEpoch}.png');
+    await tmpFile.writeAsBytes(bytes);
+
     setState(() {
-      _insertImage = image;
+      _insertImage = XFile(tmpFile.path);
       _initialized = false;
       _removeBackground = false;
       _processedBytes = null;
@@ -439,21 +447,11 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
       _currentRect = null;
       _rectStart = null;
       _invertColors = false;
-      _removeDark = null; // 새 이미지 선택 시 배경 종류 자동으로 초기화
+      _removeDark = null;
       _insertUiImage = null;
     });
 
-    if (croppedBytes != null) {
-      // 크롭된 바이트를 임시 파일로 저장 후 ui.Image 로드
-      final tmp = await getTemporaryDirectory();
-      final tmpFile = File('${tmp.path}/crop_${DateTime.now().millisecondsSinceEpoch}.png');
-      await tmpFile.writeAsBytes(croppedBytes);
-      setState(() => _insertImage = XFile(tmpFile.path));
-      await _loadUiImageFromBytes(croppedBytes);
-    } else {
-      // 크롭 취소 → 원본 사용
-      await _loadUiImageFromFile(image.path);
-    }
+    await _loadUiImageFromBytes(bytes);
   }
 
   void _initPosition(Size previewSize) {
@@ -554,9 +552,14 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
           icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1C1C1E), size: 20),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('RUN PICTURE',
-            style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
-                fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
+        title: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('RUN PICTURE',
+              style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
+                  fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
+          Text(_t('사진 속에 사진 추가', 'Photo in Photo'),
+              style: const TextStyle(fontFamily: 'SUIT', color: Color(0xFF8E8E93),
+                  fontWeight: FontWeight.w500, fontSize: 11, letterSpacing: 0)),
+        ]),
         centerTitle: true,
         actions: [
           Padding(

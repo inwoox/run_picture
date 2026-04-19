@@ -13,75 +13,78 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  LabelLanguage _language = LabelLanguage.korean;
-
-  String _t(String ko, String en) => _language == LabelLanguage.korean ? ko : en;
+  String _t(String ko, String en) => languageNotifier.value == LabelLanguage.korean ? ko : en;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 12),
-          child: Center(child: _fontSizeToggle()),
-        ),
-        title: const Text('RUN PICTURE',
-            style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
-                fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
-        centerTitle: true,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _langToggle('한', LabelLanguage.korean),
-              const SizedBox(width: 6),
-              _langToggle('EN', LabelLanguage.english),
-            ]),
+    return ValueListenableBuilder<LabelLanguage>(
+      valueListenable: languageNotifier,
+      builder: (_, lang, __) {
+        return Scaffold(
+          backgroundColor: const Color(0xFFF5F7FA),
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: Center(child: _fontSizeToggle()),
+            ),
+            title: const Text('RUN PIC',
+                style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
+                    fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
+            centerTitle: true,
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  _langToggle('한', LabelLanguage.korean),
+                  const SizedBox(width: 6),
+                  _langToggle('EN', LabelLanguage.english),
+                ]),
+              ),
+            ],
           ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Expanded(
-              child: _menuCard(
-                icon: Icons.style_rounded,
-                title: _t('러닝 카드 생성', 'Running Card'),
-                subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
-                onTap: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => RunningCardScreen(language: _language),
-                )),
-              ),
+          body: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Expanded(
+                  child: _menuCard(
+                    icon: Icons.style_rounded,
+                    title: _t('러닝 카드 생성', 'Running Card'),
+                    subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => const RunningCardScreen(),
+                    )),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: _menuCard(
+                    icon: Icons.photo_library_rounded,
+                    title: _t('사진 속에 사진 추가', 'Photo in Photo'),
+                    subtitle: _t('사진 안에 다른 사진 삽입', 'Insert a photo inside another'),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => const PhotoInPhotoScreen(),
+                    )),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: _menuCard(
+                    icon: Icons.directions_run_rounded,
+                    title: _t('기록 사진 생성', 'Create Record Photo'),
+                    subtitle: _t('러닝 기록을 사진에 오버레이', 'Overlay running stats on a photo'),
+                    onTap: () => Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => const RecordPhotoScreen(),
+                    )),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _menuCard(
-                icon: Icons.photo_library_rounded,
-                title: _t('사진 속에 사진 추가', 'Photo in Photo'),
-                subtitle: _t('사진 안에 다른 사진 삽입', 'Insert a photo inside another'),
-                onTap: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => PhotoInPhotoScreen(language: _language),
-                )),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _menuCard(
-                icon: Icons.directions_run_rounded,
-                title: _t('기록 사진 생성', 'Create Record Photo'),
-                subtitle: _t('러닝 기록을 사진에 오버레이', 'Overlay running stats on a photo'),
-                onTap: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => RecordPhotoScreen(language: _language),
-                )),
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -148,9 +151,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _langToggle(String label, LabelLanguage lang) {
-    final selected = _language == lang;
+    final selected = languageNotifier.value == lang;
     return GestureDetector(
-      onTap: () => setState(() => _language = lang),
+      onTap: () => languageNotifier.value = lang,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(

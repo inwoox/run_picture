@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/overlay_style.dart';
+import '../app_settings.dart';
 import '../utils/save_util.dart';
 import '../widgets/ratio_picker_sheet.dart';
 
@@ -335,8 +336,7 @@ class _ErasePainter extends CustomPainter {
 
 // ── 메인 화면 ────────────────────────────────────────────────────────────────
 class PhotoInPhotoScreen extends StatefulWidget {
-  final LabelLanguage language;
-  const PhotoInPhotoScreen({super.key, this.language = LabelLanguage.korean});
+  const PhotoInPhotoScreen({super.key});
 
   @override
   State<PhotoInPhotoScreen> createState() => _PhotoInPhotoScreenState();
@@ -350,8 +350,6 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   XFile? _insertImage;
   double _bgRatio = 4.0 / 5.0;
   Alignment _bgAlignment = Alignment.center;
-  late LabelLanguage _language;
-
   // 위치/크기
   double _insertDx = 0, _insertDy = 0, _insertWidth = 0;
   double _widthAtScaleStart = 0;
@@ -376,18 +374,12 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   ui.Image? _insertUiImage;
 
   @override
-  void initState() {
-    super.initState();
-    _language = widget.language;
-  }
-
-  @override
   void dispose() {
     _insertUiImage?.dispose();
     super.dispose();
   }
 
-  String _t(String ko, String en) => _language == LabelLanguage.korean ? ko : en;
+  String _t(String ko, String en) => languageNotifier.value == LabelLanguage.korean ? ko : en;
 
   Future<ui.Image> _bytesToUiImage(Uint8List bytes) async {
     final codec = await ui.instantiateImageCodec(bytes);
@@ -553,7 +545,7 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('RUN PICTURE',
+          const Text('RUN PIC',
               style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                   fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
           Text(_t('사진 속에 사진 추가', 'Photo in Photo'),
@@ -981,9 +973,9 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   }
 
   Widget _langToggle(String label, LabelLanguage lang) {
-    final selected = _language == lang;
+    final selected = languageNotifier.value == lang;
     return GestureDetector(
-      onTap: () => setState(() => _language = lang),
+      onTap: () => setState(() => languageNotifier.value = lang),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(

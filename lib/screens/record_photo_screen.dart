@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../models/overlay_style.dart';
+import '../app_settings.dart';
 import '../services/ocr_service.dart';
 import 'editor_screen.dart';
 import '../widgets/ratio_picker_sheet.dart';
 import '../widgets/ocr_confirm_sheet.dart';
 
 class RecordPhotoScreen extends StatefulWidget {
-  final LabelLanguage language;
-
-  const RecordPhotoScreen({super.key, this.language = LabelLanguage.korean});
+  const RecordPhotoScreen({super.key});
 
   @override
   State<RecordPhotoScreen> createState() => _RecordPhotoScreenState();
@@ -22,15 +22,8 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
   double _selectedRatio = 9.0 / 16.0;
   Alignment _selectedAlignment = Alignment.center;
   bool _isProcessing = false;
-  late LabelLanguage _language;
 
-  @override
-  void initState() {
-    super.initState();
-    _language = widget.language;
-  }
-
-  String _t(String ko, String en) => _language == LabelLanguage.korean ? ko : en;
+  String _t(String ko, String en) => languageNotifier.value == LabelLanguage.korean ? ko : en;
 
   Future<void> _pickPhoto() async {
     final image = await ImagePicker().pickImage(source: ImageSource.gallery);
@@ -54,12 +47,12 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
       final record = await OcrService.extractFromImage(_captureImage!.path);
       if (!mounted) return;
       // OCR 결과 확인·수정 시트
-      final confirmed = await showOcrConfirmSheet(context, record, _language);
+      final confirmed = await showOcrConfirmSheet(context, record, languageNotifier.value);
       if (!mounted) return;
       if (confirmed == null) return; // 취소
       Navigator.push(context, MaterialPageRoute(
         builder: (_) => EditorScreen(image: _selectedImage!, record: confirmed,
-            language: _language, ratio: _selectedRatio, alignment: _selectedAlignment),
+            language: languageNotifier.value, ratio: _selectedRatio, alignment: _selectedAlignment),
       ));
     } catch (e) {
       if (mounted) _showError('${_t('OCR 처리 실패', 'OCR failed')}: $e');
@@ -86,7 +79,7 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('RUN PICTURE',
+          const Text('RUN PIC',
               style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                   fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
           Text(_t('기록 사진 생성', 'Create Record Photo'),
@@ -141,7 +134,7 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
                   padding: const EdgeInsets.only(left: 34, bottom: 14),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.asset('assets/sample_running.png', width: double.infinity, fit: BoxFit.fitWidth),
+                    child: SvgPicture.asset('assets/sample_running.svg', width: double.infinity, height: 180, fit: BoxFit.contain),
                   ),
                 ),
                 _guideStep('3', _t('기록 사진 생성 탭', 'Tap Create Record Photo'),
@@ -246,9 +239,9 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
   }
 
   Widget _langToggle(String label, LabelLanguage lang) {
-    final selected = _language == lang;
+    final selected = languageNotifier.value == lang;
     return GestureDetector(
-      onTap: () => setState(() => _language = lang),
+      onTap: () => setState(() => languageNotifier.value = lang),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(

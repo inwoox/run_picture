@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:screenshot/screenshot.dart';
@@ -7,6 +8,7 @@ import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/running_record.dart';
 import '../models/overlay_style.dart';
+import '../app_settings.dart';
 import '../services/ocr_service.dart';
 import '../utils/save_util.dart';
 import '../widgets/ocr_confirm_sheet.dart';
@@ -45,8 +47,7 @@ const _fonts = [
 ];
 
 class RunningCardScreen extends StatefulWidget {
-  final LabelLanguage language;
-  const RunningCardScreen({super.key, this.language = LabelLanguage.korean});
+  const RunningCardScreen({super.key});
 
   @override
   State<RunningCardScreen> createState() => _RunningCardScreenState();
@@ -54,7 +55,6 @@ class RunningCardScreen extends StatefulWidget {
 
 class _RunningCardScreenState extends State<RunningCardScreen> {
   final ScreenshotController _screenshotController = ScreenshotController();
-  late LabelLanguage _language;
   XFile? _captureImage;
   RunningRecord? _record;
   bool _isProcessing = false;
@@ -62,13 +62,7 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
   Color _accentColor = _accentColors[0];
   String _fontFamily = 'SUIT';
 
-  @override
-  void initState() {
-    super.initState();
-    _language = widget.language;
-  }
-
-  String _t(String ko, String en) => _language == LabelLanguage.korean ? ko : en;
+  String _t(String ko, String en) => languageNotifier.value == LabelLanguage.korean ? ko : en;
 
   Future<void> _pickCapture() async {
     final image = await ImagePicker().pickImage(source: ImageSource.gallery);
@@ -78,7 +72,7 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
       final record = await OcrService.extractFromImage(image.path);
       if (!mounted) return;
       // OCR 결과 확인·수정 시트
-      final confirmed = await showOcrConfirmSheet(context, record, _language);
+      final confirmed = await showOcrConfirmSheet(context, record, languageNotifier.value);
       if (!mounted) return;
       if (confirmed == null) {
         // 취소 시 이미지 선택 초기화
@@ -138,7 +132,7 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('RUN PICTURE',
+          const Text('RUN PIC',
               style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                   fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
           Text(_t('러닝 카드 생성', 'Running Card'),
@@ -303,19 +297,19 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
     final r = _record!;
     switch (_selectedTemplate) {
       case _TemplateType.minimal:
-        return _MinimalCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+        return _MinimalCard(record: r, accent: _accentColor, font: _fontFamily, language: languageNotifier.value);
       case _TemplateType.center:
-        return _CenterCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+        return _CenterCard(record: r, accent: _accentColor, font: _fontFamily, language: languageNotifier.value);
       case _TemplateType.grid:
-        return _GridCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+        return _GridCard(record: r, accent: _accentColor, font: _fontFamily, language: languageNotifier.value);
       case _TemplateType.side:
-        return _SideCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+        return _SideCard(record: r, accent: _accentColor, font: _fontFamily, language: languageNotifier.value);
       case _TemplateType.badge:
-        return _BadgeCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+        return _BadgeCard(record: r, accent: _accentColor, font: _fontFamily, language: languageNotifier.value);
       case _TemplateType.split:
-        return _SplitCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+        return _SplitCard(record: r, accent: _accentColor, font: _fontFamily, language: languageNotifier.value);
       case _TemplateType.dark:
-        return _DarkCard(record: r, accent: _accentColor, font: _fontFamily, language: _language);
+        return _DarkCard(record: r, accent: _accentColor, font: _fontFamily, language: languageNotifier.value);
     }
   }
 
@@ -402,7 +396,7 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
           padding: const EdgeInsets.only(left: 34, bottom: 14),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.asset('assets/sample_running.png', width: double.infinity, fit: BoxFit.fitWidth),
+            child: SvgPicture.asset('assets/sample_running.svg', width: double.infinity, height: 180, fit: BoxFit.contain),
           ),
         ),
         _guideStep('2', _t('템플릿 선택', 'Choose a template'),
@@ -445,9 +439,9 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
   }
 
   Widget _langToggle(String label, LabelLanguage lang) {
-    final selected = _language == lang;
+    final selected = languageNotifier.value == lang;
     return GestureDetector(
-      onTap: () => setState(() => _language = lang),
+      onTap: () => setState(() => languageNotifier.value = lang),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
@@ -491,7 +485,7 @@ class _MinimalCard extends StatelessWidget {
           Row(children: [
             Expanded(child: Text(record.date,
                 style: _ts(font, fontSize: 12, color: _grey))),
-            Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+            Text('RUN PIC', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
           ]),
           const Spacer(flex: 2),
@@ -538,7 +532,7 @@ class _CenterCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(28, 32, 28, 32),
         child: Column(children: [
           // 상단 브랜드
-          Text('RUN PICTURE', style: _ts(font, fontSize: 10,
+          Text('RUN PIC', style: _ts(font, fontSize: 10,
               fontWeight: FontWeight.w800, color: accent, letterSpacing: 3)),
           if (record.date.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -610,7 +604,7 @@ class _GridCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // 브랜드
           Row(children: [
-            Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+            Text('RUN PIC', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
             const Spacer(),
             if (record.date.isNotEmpty)
@@ -804,7 +798,7 @@ class _BadgeCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
         child: Column(children: [
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+            Text('RUN PIC', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
             if (record.date.isNotEmpty)
               Text(record.date, style: _ts(font, fontSize: 11, color: _grey)),
@@ -896,7 +890,7 @@ class _SplitCard extends StatelessWidget {
             color: accent,
             padding: const EdgeInsets.fromLTRB(28, 28, 28, 12),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+              Text('RUN PIC', style: _ts(font, fontSize: 9,
                   fontWeight: FontWeight.w800,
                   color: Colors.white.withValues(alpha: 0.6), letterSpacing: 2)),
               const Spacer(),
@@ -997,7 +991,7 @@ class _DarkCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Text('RUN PICTURE', style: _ts(font, fontSize: 9,
+            Text('RUN PIC', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
             const Spacer(),
             if (record.date.isNotEmpty)

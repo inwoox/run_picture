@@ -15,7 +15,7 @@ class RunningPhotoApp extends StatelessWidget {
       valueListenable: fontSizeNotifier,
       builder: (_, isLarge, __) {
         return MaterialApp(
-          title: 'RUN PICTURE',
+          title: 'RUN PIC',
           debugShowCheckedModeBanner: false,
           theme: ThemeData.dark(),
           builder: (context, child) {

@@ -79,7 +79,7 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('RUN PIC',
+          const Text('PaceGraphy',
               style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                   fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
           Text(_t('기록 사진 생성', 'Create Record Photo'),

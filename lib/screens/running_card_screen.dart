@@ -98,7 +98,7 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
       final tmp = await getTemporaryDirectory();
       final file = File('${tmp.path}/rp_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(bytes);
-      await Gal.putImage(file.path, album: 'RunPicture');
+      await Gal.putImage(file.path, album: 'PaceGraphy');
       await file.delete();
       if (mounted) hideSavingDialog(context);
       if (mounted) _showAlert(_t('저장 완료', 'Saved'), _t('사진첩에 저장되었습니다!', 'Saved to photo library!'));
@@ -132,7 +132,7 @@ class _RunningCardScreenState extends State<RunningCardScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('RUN PIC',
+          const Text('PaceGraphy',
               style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                   fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
           Text(_t('러닝 카드 생성', 'Running Card'),
@@ -485,7 +485,7 @@ class _MinimalCard extends StatelessWidget {
           Row(children: [
             Expanded(child: Text(record.date,
                 style: _ts(font, fontSize: 12, color: _grey))),
-            Text('RUN PIC', style: _ts(font, fontSize: 9,
+            Text('PaceGraphy', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
           ]),
           const Spacer(flex: 2),
@@ -532,7 +532,7 @@ class _CenterCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(28, 32, 28, 32),
         child: Column(children: [
           // 상단 브랜드
-          Text('RUN PIC', style: _ts(font, fontSize: 10,
+          Text('PaceGraphy', style: _ts(font, fontSize: 10,
               fontWeight: FontWeight.w800, color: accent, letterSpacing: 3)),
           if (record.date.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -604,7 +604,7 @@ class _GridCard extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           // 브랜드
           Row(children: [
-            Text('RUN PIC', style: _ts(font, fontSize: 9,
+            Text('PaceGraphy', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
             const Spacer(),
             if (record.date.isNotEmpty)
@@ -684,7 +684,7 @@ class _SideCard extends StatelessWidget {
             color: accent,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('RUN\nPICTURE', style: _ts(font, fontSize: 10,
+              Text('PACE\nGRAPHY', style: _ts(font, fontSize: 10,
                   fontWeight: FontWeight.w900, color: Colors.white.withValues(alpha: 0.7),
                   letterSpacing: 1.5, height: 1.4)),
               const Spacer(),
@@ -798,7 +798,7 @@ class _BadgeCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
         child: Column(children: [
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Text('RUN PIC', style: _ts(font, fontSize: 9,
+            Text('PaceGraphy', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
             if (record.date.isNotEmpty)
               Text(record.date, style: _ts(font, fontSize: 11, color: _grey)),
@@ -890,7 +890,7 @@ class _SplitCard extends StatelessWidget {
             color: accent,
             padding: const EdgeInsets.fromLTRB(28, 28, 28, 12),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('RUN PIC', style: _ts(font, fontSize: 9,
+              Text('PaceGraphy', style: _ts(font, fontSize: 9,
                   fontWeight: FontWeight.w800,
                   color: Colors.white.withValues(alpha: 0.6), letterSpacing: 2)),
               const Spacer(),
@@ -991,7 +991,7 @@ class _DarkCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Text('RUN PIC', style: _ts(font, fontSize: 9,
+            Text('PaceGraphy', style: _ts(font, fontSize: 9,
                 fontWeight: FontWeight.w800, color: accent, letterSpacing: 2)),
             const Spacer(),
             if (record.date.isNotEmpty)

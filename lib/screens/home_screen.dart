@@ -29,7 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.only(left: 12),
               child: Center(child: _fontSizeToggle()),
             ),
-            title: const Text('RUN PIC',
+            title: const Text('PaceGraphy',
                 style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                     fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
             centerTitle: true,

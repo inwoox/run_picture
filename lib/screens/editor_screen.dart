@@ -165,7 +165,7 @@ class _EditorScreenState extends State<EditorScreen> {
       final tmp = await getTemporaryDirectory();
       final file = File('${tmp.path}/rp_${DateTime.now().millisecondsSinceEpoch}.png');
       await file.writeAsBytes(bytes);
-      await Gal.putImage(file.path, album: 'RunPicture');
+      await Gal.putImage(file.path, album: 'PaceGraphy');
       await file.delete();
       hideSavingDialog(context);
       _alert(_t('사진첩에 저장되었습니다!', 'Saved to photo library!'));
@@ -311,7 +311,7 @@ class _EditorScreenState extends State<EditorScreen> {
           icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1C1C1E), size: 20),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('RUN PIC',
+        title: const Text('PaceGraphy',
             style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E), fontWeight: FontWeight.w700, fontSize: 20, letterSpacing: 1.0)),
         centerTitle: true,
         actions: [

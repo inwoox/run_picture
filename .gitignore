@@ -44,6 +44,12 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Xcode build cache
+**/DerivedData/
+**/PIFCache/
+**/*.xcworkspace/xcuserdata/
+**/*.xcodeproj/xcuserdata/
+
 # Keystore and signing
 /android/key.properties
 /android/app/upload-keystore.jks

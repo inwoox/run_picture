@@ -4,6 +4,7 @@ import '../app_settings.dart';
 import 'record_photo_screen.dart';
 import 'photo_in_photo_screen.dart';
 import 'running_card_screen.dart';
+import 'video_photo_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -47,38 +48,42 @@ class _HomeScreenState extends State<HomeScreen> {
           body: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.start,
               children: [
-                Expanded(
-                  child: _menuCard(
-                    icon: Icons.style_rounded,
-                    title: _t('러닝 카드 생성', 'Running Card'),
-                    subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => const RunningCardScreen(),
-                    )),
-                  ),
+                _menuCard(
+                  icon: Icons.style_rounded,
+                  title: _t('러닝 카드 생성', 'Running Card'),
+                  subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const RunningCardScreen(),
+                  )),
                 ),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: _menuCard(
-                    icon: Icons.photo_library_rounded,
-                    title: _t('사진 속에 사진 추가', 'Photo in Photo'),
-                    subtitle: _t('사진 안에 다른 사진 삽입', 'Insert a photo inside another'),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => const PhotoInPhotoScreen(),
-                    )),
-                  ),
+                const SizedBox(height: 12),
+                _menuCard(
+                  icon: Icons.photo_library_rounded,
+                  title: _t('사진 속에 사진 추가', 'Photo in Photo'),
+                  subtitle: _t('사진 안에 다른 사진 삽입', 'Insert a photo inside another'),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const PhotoInPhotoScreen(),
+                  )),
                 ),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: _menuCard(
-                    icon: Icons.directions_run_rounded,
-                    title: _t('기록 사진 생성', 'Create Record Photo'),
-                    subtitle: _t('러닝 기록을 사진에 오버레이', 'Overlay running stats on a photo'),
-                    onTap: () => Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => const RecordPhotoScreen(),
-                    )),
-                  ),
+                const SizedBox(height: 12),
+                _menuCard(
+                  icon: Icons.directions_run_rounded,
+                  title: _t('기록 사진 생성', 'Create Record Photo'),
+                  subtitle: _t('러닝 기록을 사진에 오버레이', 'Overlay running stats on a photo'),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const RecordPhotoScreen(),
+                  )),
+                ),
+                const SizedBox(height: 12),
+                _menuCard(
+                  icon: Icons.video_library_rounded,
+                  title: _t('영상에 사진 추가', 'Photo on Video'),
+                  subtitle: _t('영상 위에 사진 합성 (배경 제거·색 반전)', 'Overlay a photo on video'),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const VideoPhotoScreen(),
+                  )),
                 ),
               ],
             ),
@@ -98,27 +103,41 @@ class _HomeScreenState extends State<HomeScreen> {
       onTap: onTap,
       child: Container(
         width: double.infinity,
+        height: 120,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 12, offset: const Offset(0, 4))],
         ),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Container(
-            width: 72, height: 72,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0F0F0),
-              borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(children: [
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F0F0),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(icon, color: const Color(0xFF1C1C1E), size: 28),
             ),
-            child: Icon(icon, color: const Color(0xFF1C1C1E), size: 36),
-          ),
-          const SizedBox(height: 16),
-          Text(title, style: const TextStyle(
-              fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
-              fontWeight: FontWeight.w700, fontSize: 16)),
-          const SizedBox(height: 6),
-          Text(subtitle, style: const TextStyle(color: Color(0xFF8E8E93), fontSize: 12)),
-        ]),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(
+                      fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
+                      fontWeight: FontWeight.w700, fontSize: 16)),
+                  const SizedBox(height: 4),
+                  Text(subtitle, style: const TextStyle(
+                      color: Color(0xFF8E8E93), fontSize: 12)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFFCCCCCC), size: 22),
+          ]),
+        ),
       ),
     );
   }

@@ -256,6 +256,128 @@ Future<Uint8List> _bgRemoveTask(Map<String, dynamic> args) async {
   return Uint8List.fromList(img.encodePng(result));
 }
 
+// ── 배경 효과 ────────────────────────────────────────────────────────────────
+enum _BgEffect { none, sketch, colorSketch }
+
+class _SketchParams {
+  final Uint8List bytes;
+  final int blurRadius; // 낮을수록 선명 (4~20, 기본 12)
+  const _SketchParams(this.bytes, this.blurRadius);
+}
+
+class _ColorSketchParams {
+  final Uint8List bytes;
+  final double colorTint; // 색 강도 (0.1~0.6, 기본 0.35)
+  const _ColorSketchParams(this.bytes, this.colorTint);
+}
+
+Uint8List _sketchEffectTask(_SketchParams p) {
+  var decoded = img.decodeImage(p.bytes);
+  if (decoded == null) return p.bytes;
+  // 최대 1500px로 다운샘플 (스케치는 해상도가 선 디테일에 영향)
+  if (decoded.width > 1500) decoded = img.copyResize(decoded, width: 1500);
+  final w = decoded.width, h = decoded.height;
+
+  // 1. 가중 그레이스케일
+  final gray = img.Image(width: w, height: h);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final px = decoded.getPixel(x, y);
+      final v = (px.rNormalized * 0.299 + px.gNormalized * 0.587 + px.bNormalized * 0.114);
+      final vi = (v * 255).round().clamp(0, 255);
+      gray.setPixelRgb(x, y, vi, vi, vi);
+    }
+  }
+
+  // 2. 반전
+  final inv = img.Image(width: w, height: h);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final v = 255 - (gray.getPixel(x, y).rNormalized * 255).round();
+      inv.setPixelRgb(x, y, v, v, v);
+    }
+  }
+
+  // 3. 블러 — radius가 작을수록 선명한 선
+  final blurred = img.gaussianBlur(inv, radius: p.blurRadius);
+
+  // 4. Color Dodge 합성 → 스케치 선
+  final result = img.Image(width: w, height: h);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final g = (gray.getPixel(x, y).rNormalized * 255).round();
+      final b = (blurred.getPixel(x, y).rNormalized * 255).round();
+      final dodge = b >= 255 ? 255 : (g * 255 / (255 - b)).clamp(0.0, 255.0).round();
+      result.setPixelRgb(x, y, dodge, dodge, dodge);
+    }
+  }
+  return Uint8List.fromList(img.encodeJpg(result, quality: 88));
+}
+
+// 채색 스케치: 그림체와 동일한 방식, 색 강도는 파라미터로 조절
+Uint8List _colorSketchTask(_ColorSketchParams p) {
+  var decoded = img.decodeImage(p.bytes);
+  if (decoded == null) return p.bytes;
+  if (decoded.width > 1500) decoded = img.copyResize(decoded, width: 1500);
+  final w = decoded.width, h = decoded.height;
+
+  // ── Step 1: 스케치 선 (sketch 모드 완전 동일) ──
+  final gray = img.Image(width: w, height: h);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final px = decoded.getPixel(x, y);
+      final v = px.rNormalized * 0.299 + px.gNormalized * 0.587 + px.bNormalized * 0.114;
+      final vi = (v * 255).round().clamp(0, 255);
+      gray.setPixelRgb(x, y, vi, vi, vi);
+    }
+  }
+  final inv = img.Image(width: w, height: h);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final v = 255 - (gray.getPixel(x, y).rNormalized * 255).round();
+      inv.setPixelRgb(x, y, v, v, v);
+    }
+  }
+  final invBlurred = img.gaussianBlur(inv, radius: 12);
+
+  final dodgeMap = List.filled(w * h, 255);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final gv = (gray.getPixel(x, y).rNormalized * 255).round();
+      final bv = (invBlurred.getPixel(x, y).rNormalized * 255).round();
+      dodgeMap[y * w + x] =
+          bv >= 255 ? 255 : (gv * 255 / (255 - bv)).clamp(0.0, 255.0).round();
+    }
+  }
+
+  // ── Step 2: 합성 — 스케치 베이스 + 원본 색상 (블러 없음 → 번짐 없음) ──
+  const lineThresh = 230;
+  const darkOrigThresh = 40;
+  final colorTint = p.colorTint;
+  final result = img.Image(width: w, height: h);
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      final dodge = dodgeMap[y * w + x];
+      final origGray = (gray.getPixel(x, y).rNormalized * 255).round();
+
+      if (dodge < lineThresh && origGray >= darkOrigThresh) {
+        result.setPixelRgb(x, y, 0, 0, 0);
+      } else {
+        final orig = decoded.getPixel(x, y);
+        final origR = (orig.rNormalized * 255).round();
+        final origG = (orig.gNormalized * 255).round();
+        final origB = (orig.bNormalized * 255).round();
+        final r = (dodge * (1 - colorTint) + origR * colorTint).round().clamp(0, 255);
+        final g = (dodge * (1 - colorTint) + origG * colorTint).round().clamp(0, 255);
+        final b = (dodge * (1 - colorTint) + origB * colorTint).round().clamp(0, 255);
+        result.setPixelRgb(x, y, r, g, b);
+      }
+    }
+  }
+  return Uint8List.fromList(img.encodeJpg(result, quality: 90));
+}
+
+
 enum _EraseToolType { brush, rect }
 
 // ── 지우개 CustomPainter ────────────────────────────────────────────────────
@@ -363,6 +485,13 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
   bool? _removeDark = null; // null=자동, true=어두운배경(가민), false=밝은배경(스트라바)
   bool _invertColors = false; // 색상 반전
 
+  // 배경 효과
+  _BgEffect _bgEffect = _BgEffect.none;
+  Uint8List? _bgEffectBytes;
+  bool _bgProcessing = false;
+  double _sketchSharpness = 5.0; // 1~10, 높을수록 선명 (blur radius = 22 - sharpness*2)
+  double _colorTintValue = 0.35;  // 0.1~0.6, 높을수록 색 진함
+
   // 지우개
   bool _eraseMode = false;
   _EraseToolType _eraseToolType = _EraseToolType.brush;
@@ -404,7 +533,32 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
     final result = await showRatioPickerSheet(context, img.path);
     if (result == null || !mounted) return;
     final (ratio, alignment) = result;
-    setState(() { _bgImage = img; _bgRatio = ratio; _bgAlignment = alignment; _initialized = false; });
+    setState(() {
+      _bgImage = img; _bgRatio = ratio; _bgAlignment = alignment; _initialized = false;
+      _bgEffect = _BgEffect.none; _bgEffectBytes = null;
+    });
+  }
+
+  Future<void> _applyBgEffect(_BgEffect effect) async {
+    if (_bgImage == null) return;
+    setState(() { _bgEffect = effect; _bgProcessing = true; });
+    if (effect == _BgEffect.none) {
+      setState(() { _bgEffectBytes = null; _bgProcessing = false; });
+      return;
+    }
+    try {
+      final bytes = await File(_bgImage!.path).readAsBytes();
+      final Uint8List result;
+      if (effect == _BgEffect.colorSketch) {
+        result = await compute(_colorSketchTask, _ColorSketchParams(bytes, _colorTintValue));
+      } else {
+        final blurRadius = (22 - _sketchSharpness * 2).clamp(4, 20).round();
+        result = await compute(_sketchEffectTask, _SketchParams(bytes, blurRadius));
+      }
+      if (mounted) setState(() { _bgEffectBytes = result; _bgProcessing = false; });
+    } catch (_) {
+      if (mounted) setState(() { _bgProcessing = false; });
+    }
   }
 
   Future<void> _pickInsert() async {
@@ -580,6 +734,79 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
             ]),
           ),
 
+          // ── 배경 효과 ──
+          if (bothSelected)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Icon(Icons.palette_rounded, size: 15, color: Color(0xFF1C1C1E)),
+                      const SizedBox(width: 6),
+                      Text(_t('배경 사진 효과', 'BG Effect'),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+                      const SizedBox(width: 12),
+                      if (_bgProcessing)
+                        const SizedBox(width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1C1C1E)))
+                      else ...[
+                        _bgEffectChip(_t('없음', 'None'), _BgEffect.none),
+                        const SizedBox(width: 6),
+                        _bgEffectChip(_t('스케치', 'Sketch'), _BgEffect.sketch),
+                        const SizedBox(width: 6),
+                        _bgEffectChip(_t('채색', 'Color'), _BgEffect.colorSketch),
+                      ],
+                    ]),
+                    // 스케치: 선명도 슬라이더
+                    if (_bgEffect == _BgEffect.sketch && !_bgProcessing) ...[
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        Text(_t('선명도', 'Sharpness'),
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+                        Expanded(child: _thinSlider(
+                          _sketchSharpness, 1, 10,
+                          (v) => setState(() => _sketchSharpness = v),
+                          onEnd: (_) => _applyBgEffect(_BgEffect.sketch),
+                        )),
+                        SizedBox(
+                          width: 28,
+                          child: Text(_sketchSharpness.round().toString(),
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+                        ),
+                      ]),
+                    ],
+                    // 채색: 색 강도 슬라이더
+                    if (_bgEffect == _BgEffect.colorSketch && !_bgProcessing) ...[
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        Text(_t('색 강도', 'Color'),
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93))),
+                        Expanded(child: _thinSlider(
+                          _colorTintValue, 0.1, 0.6,
+                          (v) => setState(() => _colorTintValue = v),
+                          onEnd: (_) => _applyBgEffect(_BgEffect.colorSketch),
+                        )),
+                        SizedBox(
+                          width: 28,
+                          child: Text('${(_colorTintValue * 100).round()}%',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+                        ),
+                      ]),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+
           // ── 프리뷰 ──
           Expanded(
             child: bothSelected
@@ -636,7 +863,9 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                           key: _previewKey,
                           controller: _screenshotController,
                           child: Stack(fit: StackFit.expand, children: [
-                            Image.file(File(_bgImage!.path), fit: BoxFit.cover, alignment: _bgAlignment),
+                            _bgEffectBytes != null
+                                ? Image.memory(_bgEffectBytes!, fit: BoxFit.cover, alignment: _bgAlignment)
+                                : Image.file(File(_bgImage!.path), fit: BoxFit.cover, alignment: _bgAlignment),
                             if (_initialized && _insertUiImage != null)
                               Positioned(
                                 left: _insertDx,
@@ -711,7 +940,7 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
                       Row(children: [
                         const Icon(Icons.auto_fix_high_rounded, size: 15, color: Color(0xFF1C1C1E)),
                         const SizedBox(width: 6),
-                        Text(_t('배경 제거', 'Remove BG'),
+                        Text(_t('기록 사진 배경 제거', 'Remove BG'),
                             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
                         const Spacer(),
                         if (_isProcessingBg)
@@ -840,6 +1069,25 @@ class _PhotoInPhotoScreenState extends State<PhotoInPhotoScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _bgEffectChip(String label, _BgEffect effect) {
+    final selected = _bgEffect == effect;
+    return GestureDetector(
+      onTap: () => _applyBgEffect(effect),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFF5F7FA),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA)),
+        ),
+        child: Text(label, style: TextStyle(
+          fontSize: 12, fontWeight: FontWeight.w600,
+          color: selected ? Colors.white : const Color(0xFF8E8E93),
+        )),
       ),
     );
   }

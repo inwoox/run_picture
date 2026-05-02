@@ -1,4 +1,4 @@
-package com.example.running_photo_app
+package com.inwoo.pacegraphy
 
 import io.flutter.embedding.android.FlutterActivity
 

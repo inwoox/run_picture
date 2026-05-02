@@ -53,3 +53,4 @@ app.*.map.json
 # Keystore and signing
 /android/key.properties
 /android/app/upload-keystore.jks
+/upload-keystore.jks

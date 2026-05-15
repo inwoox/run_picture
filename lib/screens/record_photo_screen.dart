@@ -5,9 +5,9 @@ import 'dart:io';
 import '../models/overlay_style.dart';
 import '../app_settings.dart';
 import '../services/ocr_service.dart';
-import 'editor_screen.dart';
 import '../widgets/ratio_picker_sheet.dart';
 import '../widgets/ocr_confirm_sheet.dart';
+import 'record_overlay_screen.dart';
 
 class RecordPhotoScreen extends StatefulWidget {
   const RecordPhotoScreen({super.key});
@@ -51,8 +51,11 @@ class _RecordPhotoScreenState extends State<RecordPhotoScreen> {
       if (!mounted) return;
       if (confirmed == null) return; // 취소
       Navigator.push(context, MaterialPageRoute(
-        builder: (_) => EditorScreen(image: _selectedImage!, record: confirmed,
-            language: languageNotifier.value, ratio: _selectedRatio, alignment: _selectedAlignment),
+        builder: (_) => RecordOverlayScreen(
+          bgImage: _selectedImage!,
+          record: confirmed,
+          language: languageNotifier.value,
+        ),
       ));
     } catch (e) {
       if (mounted) _showError('${_t('OCR 처리 실패', 'OCR failed')}: $e');

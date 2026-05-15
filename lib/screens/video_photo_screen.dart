@@ -321,7 +321,23 @@ class _VideoPhotoScreenState extends State<VideoPhotoScreen> {
       _videoFile = file;
       _vc = vc;
       _videoRatio = 0.0;
-      _step = 1;
+    });
+  }
+
+  Future<void> _pickPhotoStep0() async {
+    final x = await _picker.pickImage(source: ImageSource.gallery);
+    if (x == null || !mounted) return;
+    final bytes = await x.readAsBytes();
+    final cropped = await Navigator.push<Uint8List>(
+      context,
+      MaterialPageRoute(builder: (_) => _CropPage(imageBytes: bytes)),
+    );
+    if (cropped == null || !mounted) return;
+    setState(() {
+      _origBytes = cropped;
+      _photoBytes = cropped;
+      _bgRemoved = false;
+      _inverted = false;
     });
   }
 
@@ -480,7 +496,7 @@ class _VideoPhotoScreenState extends State<VideoPhotoScreen> {
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
-  static const _titles = ['영상 선택', '사진 편집', '위치 조정', '처리 중', '완료'];
+  static const _titles = ['영상에 사진 추가', '사진 편집', '위치 조정', '처리 중', '완료'];
 
   @override
   Widget build(BuildContext context) {
@@ -491,7 +507,7 @@ class _VideoPhotoScreenState extends State<VideoPhotoScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_rounded, color: Color(0xFF1C1C1E)),
+          icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1C1C1E), size: 20),
           onPressed: () {
             if (_step == 0 || _step >= 3) {
               Navigator.pop(context);
@@ -500,20 +516,22 @@ class _VideoPhotoScreenState extends State<VideoPhotoScreen> {
             }
           },
         ),
-        title: Text(
-          _titles[step],
-          style: const TextStyle(
-              color: Color(0xFF1C1C1E), fontWeight: FontWeight.w700, fontSize: 18,
-              fontFamily: 'SUIT'),
-        ),
-        bottom: step < 3
+        title: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('PaceGraphy',
+              style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
+                  fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
+          Text(_titles[step],
+              style: const TextStyle(fontFamily: 'SUIT', color: Color(0xFF8E8E93),
+                  fontWeight: FontWeight.w500, fontSize: 11)),
+        ]),
+        centerTitle: true,
+        bottom: step > 0 && step < 3
             ? PreferredSize(
                 preferredSize: const Size.fromHeight(3),
                 child: LinearProgressIndicator(
-                  value: (step + 1) / 3,
+                  value: step / 2,
                   backgroundColor: const Color(0xFFE5E5EA),
-                  valueColor:
-                      const AlwaysStoppedAnimation(Color(0xFF1C1C1E)),
+                  valueColor: const AlwaysStoppedAnimation(Color(0xFF1C1C1E)),
                 ),
               )
             : null,
@@ -531,60 +549,168 @@ class _VideoPhotoScreenState extends State<VideoPhotoScreen> {
     );
   }
 
-  // ── Step 0: 영상 선택 ───────────────────────────────────────────────────
+  // ── Step 0: 영상 + 사진 선택 ───────────────────────────────────────────────
 
   Widget _buildPickVideo() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(28),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF0F0F0),
-                borderRadius: BorderRadius.circular(28),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            Expanded(child: _pickerCard(
+              hasFile: _videoFile != null,
+              label: '배경 영상',
+              icon: Icons.videocam_rounded,
+              onTap: _pickVideo,
+              isVideo: true,
+            )),
+            const SizedBox(width: 12),
+            Expanded(child: _pickerCard(
+              hasFile: _photoBytes != null,
+              label: '추가할 사진',
+              icon: Icons.add_photo_alternate_rounded,
+              onTap: _pickPhotoStep0,
+              photoBytes: _photoBytes,
+            )),
+          ]),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 6, offset: const Offset(0, 2))],
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('이렇게 사용하세요',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                      color: Color(0xFF1C1C1E))),
+              const SizedBox(height: 12),
+              _guideStep('1', '배경 영상 선택', '사진을 추가하고 싶은 러닝 영상을 선택하세요'),
+              _guideStep('2', '추가할 사진 선택',
+                  '영상 위에 올릴 사진을 선택하세요\n배경 제거·색 반전으로 깔끔하게 합성할 수 있습니다'),
+              _guideStep('3', '위치 조정 후 저장',
+                  '사진 위치와 크기를 조절하고 저장하세요', isLast: true),
+            ]),
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _videoFile == null
+                  ? null
+                  : () => setState(() => _step = 1),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1C1C1E),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: const Color(0xFFD1D1D6),
+                disabledForegroundColor: Colors.white70,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                elevation: 0,
               ),
-              child: const Icon(Icons.video_library_rounded,
-                  size: 64, color: Color(0xFF1C1C1E)),
+              child: const Text('다음',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             ),
-            const SizedBox(height: 32),
-            const Text('영상에 사진 추가',
-                style: TextStyle(
-                    color: Color(0xFF1C1C1E),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'SUIT')),
-            const SizedBox(height: 12),
-            const Text(
-              '영상을 선택하고 사진을 올려놓으세요\n배경 제거와 색 반전도 가능합니다',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: Color(0xFF8E8E93), fontSize: 15, height: 1.6),
-            ),
-            const SizedBox(height: 48),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _pickVideo,
-                icon: const Icon(Icons.video_library_rounded),
-                label: const Text('갤러리에서 영상 선택',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1C1C1E),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _pickerCard({
+    required bool hasFile,
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    Uint8List? photoBytes,
+    bool isVideo = false,
+    double height = 110,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 8, offset: const Offset(0, 3))],
+        ),
+        child: !hasFile
+            ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Container(
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(color: const Color(0xFFF0F0F0),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Icon(icon, color: const Color(0xFF1C1C1E), size: 20),
+                ),
+                const SizedBox(height: 8),
+                Text(label, style: const TextStyle(color: Color(0xFF1C1C1E),
+                    fontWeight: FontWeight.w600, fontSize: 12),
+                    textAlign: TextAlign.center),
+              ])
+            : Stack(children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: photoBytes != null
+                      ? Image.memory(photoBytes, fit: BoxFit.cover,
+                          width: double.infinity, height: height)
+                      : Container(
+                          width: double.infinity, height: height,
+                          color: const Color(0xFF1C1C1E),
+                          child: const Icon(Icons.videocam_rounded,
+                              color: Colors.white54, size: 36)),
+                ),
+                Positioned(
+                  bottom: 6, right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(color: Colors.black54,
+                        borderRadius: BorderRadius.circular(12)),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.edit, color: Colors.white, size: 11),
+                      SizedBox(width: 3),
+                      Text('변경', style: TextStyle(color: Colors.white, fontSize: 10)),
+                    ]),
+                  ),
+                ),
+              ]),
+      ),
+    );
+  }
+
+  Widget _guideStep(String num, String title, String desc, {bool isLast = false}) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(children: [
+        Container(
+          width: 22, height: 22,
+          decoration: const BoxDecoration(
+              color: Color(0xFF1C1C1E), shape: BoxShape.circle),
+          child: Center(child: Text(num, style: const TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white))),
+        ),
+        if (!isLast)
+          Container(width: 1, height: 28, color: const Color(0xFFE5E5EA),
+              margin: const EdgeInsets.symmetric(vertical: 2)),
+      ]),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontSize: 13,
+                fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+            const SizedBox(height: 2),
+            Text(desc, style: const TextStyle(
+                fontSize: 11, color: Color(0xFF8E8E93), height: 1.4)),
+          ]),
+        ),
+      ),
+    ]);
   }
 
   // ── Step 1: 사진 편집 ───────────────────────────────────────────────────

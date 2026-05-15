@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/overlay_style.dart';
 import '../app_settings.dart';
 import 'record_photo_screen.dart';
+import 'record_video_screen.dart';
 import 'photo_in_photo_screen.dart';
-import 'running_card_screen.dart';
 import 'video_photo_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -51,15 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisAlignment: MainAxisAlignment.start,
               children: [
                 _menuCard(
-                  icon: Icons.style_rounded,
-                  title: _t('러닝 카드 생성', 'Running Card'),
-                  subtitle: _t('템플릿으로 러닝 기록 카드 만들기', 'Create a styled running card'),
-                  onTap: () => Navigator.push(context, MaterialPageRoute(
-                    builder: (_) => const RunningCardScreen(),
-                  )),
-                ),
-                const SizedBox(height: 12),
-                _menuCard(
                   icon: Icons.photo_library_rounded,
                   title: _t('사진 속에 사진 추가', 'Photo in Photo'),
                   subtitle: _t('사진 안에 다른 사진 삽입', 'Insert a photo inside another'),
@@ -83,6 +74,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   subtitle: _t('영상 위에 사진 합성 (배경 제거·색 반전)', 'Overlay a photo on video'),
                   onTap: () => Navigator.push(context, MaterialPageRoute(
                     builder: (_) => const VideoPhotoScreen(),
+                  )),
+                ),
+                const SizedBox(height: 12),
+                _menuCard(
+                  icon: Icons.videocam_rounded,
+                  title: _t('기록 영상 생성', 'Create Record Video'),
+                  subtitle: _t('러닝 기록을 영상에 오버레이', 'Overlay running stats on a video'),
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const RecordVideoScreen(),
                   )),
                 ),
               ],

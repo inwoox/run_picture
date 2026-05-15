@@ -1,0 +1,311 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import '../models/overlay_style.dart';
+import '../app_settings.dart';
+import '../services/ocr_service.dart';
+import '../widgets/ocr_confirm_sheet.dart';
+import 'record_video_overlay_screen.dart';
+
+class RecordVideoScreen extends StatefulWidget {
+  const RecordVideoScreen({super.key});
+
+  @override
+  State<RecordVideoScreen> createState() => _RecordVideoScreenState();
+}
+
+class _RecordVideoScreenState extends State<RecordVideoScreen> {
+  XFile? _selectedVideo;
+  XFile? _captureImage;
+  bool _isProcessing = false;
+
+  String _t(String ko, String en) =>
+      languageNotifier.value == LabelLanguage.korean ? ko : en;
+
+  Future<void> _pickVideo() async {
+    final video = await ImagePicker().pickVideo(source: ImageSource.gallery);
+    if (video != null) setState(() => _selectedVideo = video);
+  }
+
+  Future<void> _pickCaptureImage() async {
+    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (image != null) setState(() => _captureImage = image);
+  }
+
+  Future<void> _processOcr() async {
+    if (_captureImage == null) {
+      _showError(_t('러닝 캡처 이미지를 선택해주세요', 'Please select a running capture'));
+      return;
+    }
+    if (_selectedVideo == null) {
+      _showError(_t('배경 영상을 먼저 선택해주세요', 'Please select a background video'));
+      return;
+    }
+    setState(() => _isProcessing = true);
+    try {
+      final record = await OcrService.extractFromImage(_captureImage!.path);
+      if (!mounted) return;
+      final confirmed = await showOcrConfirmSheet(context, record, languageNotifier.value);
+      if (!mounted) return;
+      if (confirmed == null) return;
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => RecordVideoOverlayScreen(
+          video: _selectedVideo!,
+          record: confirmed,
+          language: languageNotifier.value,
+        ),
+      ));
+    } catch (e) {
+      if (mounted) _showError('${_t('OCR 처리 실패', 'OCR failed')}: $e');
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg),
+          backgroundColor: const Color(0xFF1C1C1E),
+          behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7FA),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1C1C1E), size: 20),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('PaceGraphy',
+              style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
+                  fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
+          Text(_t('기록 영상 생성', 'Create Record Video'),
+              style: const TextStyle(fontFamily: 'SUIT', color: Color(0xFF8E8E93),
+                  fontWeight: FontWeight.w500, fontSize: 11)),
+        ]),
+        centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              _langToggle('한', LabelLanguage.korean),
+              const SizedBox(width: 6),
+              _langToggle('EN', LabelLanguage.english),
+            ]),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(children: [
+                    Expanded(child: _pickerCard(
+                      hasFile: _selectedVideo != null,
+                      label: _t('배경 영상', 'Background Video'),
+                      icon: Icons.videocam_rounded,
+                      onTap: _pickVideo,
+                      isVideo: true,
+                    )),
+                    const SizedBox(width: 12),
+                    Expanded(child: _pickerCard(
+                      hasFile: _captureImage != null,
+                      label: _t('러닝 기록 사진', 'Running Record'),
+                      icon: Icons.document_scanner_rounded,
+                      onTap: _pickCaptureImage,
+                      imagePath: _captureImage?.path,
+                    )),
+                  ]),
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                          blurRadius: 6, offset: const Offset(0, 2))],
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(_t('이렇게 사용하세요', 'How to use'),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                              color: Color(0xFF1C1C1E))),
+                      const SizedBox(height: 12),
+                      _guideStep('1', _t('배경 영상 선택', 'Select background video'),
+                          _t('기록을 넣고 싶은 러닝 영상을 선택하세요', 'Choose a video to overlay your stats on')),
+                      _guideStep('2', _t('러닝 기록 사진 선택', 'Select running record photo'),
+                          _t(
+                            '러닝 앱의 기록 화면 스크린샷을 선택하세요\n값이 있는 부분만 캡처하여 첨부해야 인식률이 높습니다\n(인식이 안되는 경우, 수동으로 페이스 등 입력 가능)',
+                            'Choose a screenshot from your running app\nCrop to the stats area only for better recognition\nYou can enter values manually if recognition fails',
+                          )),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 34, bottom: 14),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: SvgPicture.asset('assets/sample_running.svg',
+                              width: double.infinity, height: 180, fit: BoxFit.contain),
+                        ),
+                      ),
+                      _guideStep('3', _t('기록 영상 생성 탭', 'Tap Create Record Video'),
+                          _t('버튼을 누르면 OCR로 기록을 자동 인식합니다', 'Tap the button to auto-extract stats via OCR')),
+                      _guideStep('4', _t('위치 조절 후 저장', 'Position and save'),
+                          _t('인식된 기록을 확인·수정하고 영상에 추가해 저장하세요', 'Review, edit, and save your stats onto the video'),
+                          isLast: true),
+                    ]),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: _isProcessing
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF1C1C1E)))
+                  : SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _processOcr,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1C1C1E),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                          elevation: 0,
+                        ),
+                        child: Text(_t('기록 영상 생성', 'Create Video'),
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pickerCard({
+    required bool hasFile,
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    String? imagePath,
+    bool isVideo = false,
+    double height = 110,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06),
+              blurRadius: 8, offset: const Offset(0, 3))],
+        ),
+        child: !hasFile
+            ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Container(
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(color: const Color(0xFFF0F0F0),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Icon(icon, color: const Color(0xFF1C1C1E), size: 20),
+                ),
+                const SizedBox(height: 8),
+                Text(label, style: const TextStyle(color: Color(0xFF1C1C1E),
+                    fontWeight: FontWeight.w600, fontSize: 12),
+                    textAlign: TextAlign.center),
+              ])
+            : Stack(children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: imagePath != null
+                      ? Image.file(File(imagePath), fit: BoxFit.cover,
+                          width: double.infinity, height: height)
+                      : Container(
+                          width: double.infinity, height: height,
+                          color: const Color(0xFF1C1C1E),
+                          child: const Icon(Icons.videocam_rounded,
+                              color: Colors.white54, size: 36)),
+                ),
+                Positioned(
+                  bottom: 6, right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(color: Colors.black54,
+                        borderRadius: BorderRadius.circular(12)),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.edit, color: Colors.white, size: 11),
+                      SizedBox(width: 3),
+                      Text('변경', style: TextStyle(color: Colors.white, fontSize: 10)),
+                    ]),
+                  ),
+                ),
+              ]),
+      ),
+    );
+  }
+
+  Widget _guideStep(String num, String title, String desc, {bool isLast = false}) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(children: [
+        Container(
+          width: 22, height: 22,
+          decoration: const BoxDecoration(
+              color: Color(0xFF1C1C1E), shape: BoxShape.circle),
+          child: Center(child: Text(num, style: const TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white))),
+        ),
+        if (!isLast)
+          Container(width: 1, height: 28, color: const Color(0xFFE5E5EA),
+              margin: const EdgeInsets.symmetric(vertical: 2)),
+      ]),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontSize: 13,
+                fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E))),
+            const SizedBox(height: 2),
+            Text(desc, style: const TextStyle(
+                fontSize: 11, color: Color(0xFF8E8E93), height: 1.4)),
+          ]),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _langToggle(String label, LabelLanguage lang) {
+    final selected = languageNotifier.value == lang;
+    return GestureDetector(
+      onTap: () => setState(() => languageNotifier.value = lang),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFF5F7FA),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(
+              color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFE5E5EA)),
+        ),
+        child: Text(label, style: TextStyle(
+          fontSize: 11, fontWeight: FontWeight.w600,
+          color: selected ? Colors.white : const Color(0xFF8E8E93),
+        )),
+      ),
+    );
+  }
+}

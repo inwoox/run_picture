@@ -12,7 +12,7 @@ import '../models/overlay_style.dart';
 import '../utils/save_util.dart';
 import '../widgets/running_cards.dart';
 
-const double _kRefWidth = 400.0;
+const double _kRefWidth = 257.0; // 400 / 1.56 → 같은 슬라이더 위치에서 텍스트 1.56배
 
 // ── 배경 효과 ────────────────────────────────────────────────────────────────
 enum _BgEffect { none, sketch, colorSketch }
@@ -135,6 +135,15 @@ class RecordOverlayScreen extends StatefulWidget {
   State<RecordOverlayScreen> createState() => _RecordOverlayScreenState();
 }
 
+// Snapshot of editable UI state for undo/redo.
+typedef _Snap = ({
+  OverlayTemplate template,
+  Color textColor,
+  String font,
+  ({Offset pos, double width}) overlay,
+  double memoFontSize,
+});
+
 class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
   final ScreenshotController _sc = ScreenshotController();
 
@@ -142,12 +151,15 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
   Color _textColor = const Color(0xFF1C1C1E);
   String _font = 'Nanum Pen Script';
   bool _showHeartRate = true;
-  bool _individualDrag = false;
+  double _memoFontSize = 18.0;
+  bool get _individualDrag => _template == OverlayTemplate.custom;
 
   late final ValueNotifier<({Offset pos, double width})> _overlayNotifier;
   late final Map<String, ValueNotifier<Offset>> _itemPositions;
+  late final ValueNotifier<Offset> _memoPosition;
 
   Size _dispSize = Size.zero;
+  Size? _imageSize;
 
   // ── Background effect ─────────────────────────────────────────────────────
   _BgEffect _bgEffect = _BgEffect.none;
@@ -156,29 +168,81 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
   double _sketchSharpness = 5.0;
   double _colorTintValue = 0.35;
 
+  // ── Undo / Redo ──────────────────────────────────────────────────────────
+  final List<_Snap> _undoStack = [];
+  final List<_Snap> _redoStack = [];
+
+  _Snap _snap() => (
+    template: _template,
+    textColor: _textColor,
+    font: _font,
+    overlay: _overlayNotifier.value,
+    memoFontSize: _memoFontSize,
+  );
+
+  void _push() {
+    _undoStack.add(_snap());
+    if (_undoStack.length > 50) _undoStack.removeAt(0);
+    _redoStack.clear();
+  }
+
+  void _undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_snap());
+    final s = _undoStack.removeLast();
+    _overlayNotifier.value = s.overlay;
+    setState(() {
+      _template = s.template;
+      _textColor = s.textColor;
+      _font = s.font;
+      _memoFontSize = s.memoFontSize;
+    });
+  }
+
+  void _redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_snap());
+    final s = _redoStack.removeLast();
+    _overlayNotifier.value = s.overlay;
+    setState(() {
+      _template = s.template;
+      _textColor = s.textColor;
+      _font = s.font;
+      _memoFontSize = s.memoFontSize;
+    });
+  }
+
   String _t(String ko, String en) =>
       widget.language == LabelLanguage.korean ? ko : en;
 
   @override
   void initState() {
     super.initState();
-    _overlayNotifier = ValueNotifier((pos: const Offset(0.05, 0.05), width: 0.55));
+    _overlayNotifier = ValueNotifier((pos: const Offset(0.05, 0.05), width: 0.66));
+    _loadImageSize();
     _itemPositions = {
       'dist': ValueNotifier(Offset.zero),
       'time': ValueNotifier(Offset.zero),
       'pace': ValueNotifier(Offset.zero),
       'hr':   ValueNotifier(Offset.zero),
     };
+    _memoPosition = ValueNotifier(const Offset(0.05, 0.80));
   }
 
   @override
   void dispose() {
     _overlayNotifier.dispose();
     for (final n in _itemPositions.values) n.dispose();
+    _memoPosition.dispose();
     super.dispose();
   }
 
   // ── Card drag ────────────────────────────────────────────────────────────
+  void _onDragStart(DragStartDetails _) {
+    _push();
+    setState(() {}); // refresh undo button state
+  }
+
   void _onDrag(DragUpdateDetails d) {
     if (_dispSize == Size.zero) return;
     final ov = _overlayNotifier.value;
@@ -196,6 +260,16 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
     if (_dispSize == Size.zero) return;
     final pos = _itemPositions[key]!.value;
     _itemPositions[key]!.value = Offset(
+      pos.dx + d.delta.dx / _dispSize.width,
+      pos.dy + d.delta.dy / _dispSize.height,
+    );
+  }
+
+  // ── Memo drag ────────────────────────────────────────────────────────────
+  void _onMemoDrag(DragUpdateDetails d) {
+    if (_dispSize == Size.zero) return;
+    final pos = _memoPosition.value;
+    _memoPosition.value = Offset(
       pos.dx + d.delta.dx / _dispSize.width,
       pos.dy + d.delta.dy / _dispSize.height,
     );
@@ -225,9 +299,8 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
 
     switch (_template) {
       case OverlayTemplate.poster:
-        // dist: top-left of card content (ref: left=20/400, dist top≈10/133)
+      case OverlayTemplate.classic:
         _itemPositions['dist']!.value = at(0.05, 0.08);
-        // stats: spaceEvenly row below dist (ref: top≈94/133 ≈ 0.71)
         for (int i = 0; i < sN; i++) {
           _itemPositions[statsItems[i].key]!.value =
               at(0.05 + i * 0.90 / sN, 0.71);
@@ -254,19 +327,18 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
         }
 
       case OverlayTemplate.grid:
-        // col1=[dist,time] left, col2=[pace,hr] right
         _itemPositions['dist']!.value = at(0.05, 0.25);
         _itemPositions['time']!.value = at(0.05, 0.62);
         _itemPositions['pace']!.value = at(0.53, 0.25);
         _itemPositions['hr']!.value   = at(0.53, 0.62);
+
+      case OverlayTemplate.custom:
+        for (int i = 0; i < aN; i++) {
+          _itemPositions[allKeys[i]]!.value = at(0.05, (i + 0.5) / aN);
+        }
     }
   }
 
-  // ── Toggle individual drag ────────────────────────────────────────────────
-  void _toggleIndividualDrag() {
-    if (!_individualDrag) _setInitialPositions();
-    setState(() => _individualDrag = !_individualDrag);
-  }
 
   Future<void> _applyBgEffect(_BgEffect effect) async {
     setState(() { _bgEffect = effect; _bgProcessing = true; });
@@ -315,7 +387,7 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
     final distNum = value.replaceAll(' km', '').trim();
 
     switch (_template) {
-      // ── Poster: dist = large number+km, others = value/label column ────
+      // ── Poster: dist 74px, stats 26px (refW/1.5 gives 1.5x scale) ─────────
       case OverlayTemplate.poster:
         if (key == 'dist') {
           return Row(
@@ -342,7 +414,7 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(value,
-                style: overlayTs(_font, fontSize: 24 * scale,
+                style: overlayTs(_font, fontSize: 26 * scale,
                     fontWeight: FontWeight.w800, color: _textColor, shadows: shadows)),
             SizedBox(height: 2 * scale),
             Text(label,
@@ -352,14 +424,51 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
           ],
         );
 
-      // ── Wide: all items = value/label column ────────────────────────────
+      // ── Classic: dist 111px (= poster 74×1.5), stats 26px ──────────────
+      case OverlayTemplate.classic:
+        if (key == 'dist') {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(distNum,
+                  style: overlayTs(_font, fontSize: 111 * scale,
+                      fontWeight: FontWeight.w900, color: _textColor,
+                      height: 1.0, shadows: shadows)),
+              SizedBox(width: 5 * scale),
+              Padding(
+                padding: EdgeInsets.only(bottom: 6 * scale),
+                child: Text('km',
+                    style: overlayTs(_font, fontSize: 26 * scale,
+                        fontWeight: FontWeight.w700, color: _textColor,
+                        shadows: shadows)),
+              ),
+            ],
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(value,
+                style: overlayTs(_font, fontSize: 26 * scale,
+                    fontWeight: FontWeight.w800, color: _textColor, shadows: shadows)),
+            SizedBox(height: 2 * scale),
+            Text(label,
+                style: overlayTs(_font, fontSize: 11 * scale,
+                    fontWeight: FontWeight.w600, color: _textColor,
+                    letterSpacing: 0.5, shadows: shadows)),
+          ],
+        );
+
+      // ── Wide: value 26px (refW/1.5 gives 1.5x scale) ────────────────────
       case OverlayTemplate.wide:
         return Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(value,
-                style: overlayTs(_font, fontSize: 19 * scale,
+                style: overlayTs(_font, fontSize: 26 * scale,
                     fontWeight: FontWeight.w800, color: _textColor, shadows: shadows)),
             SizedBox(height: 2 * scale),
             Text(label,
@@ -413,12 +522,12 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(label,
-                style: overlayTs(_font, fontSize: 11 * scale,
+                style: overlayTs(_font, fontSize: 26 * scale,
                     fontWeight: FontWeight.w600, color: _textColor,
                     letterSpacing: 0.5, shadows: shadows)),
-            SizedBox(width: 10 * scale),
+            SizedBox(width: 12 * scale),
             Text(value,
-                style: overlayTs(_font, fontSize: 22 * scale,
+                style: overlayTs(_font, fontSize: 26 * scale,
                     fontWeight: FontWeight.w800, color: _textColor, shadows: shadows)),
           ],
         );
@@ -435,6 +544,41 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
             SizedBox(height: 2 * scale),
             Text(label,
                 style: overlayTs(_font, fontSize: 10 * scale,
+                    fontWeight: FontWeight.w600, color: _textColor,
+                    letterSpacing: 0.5, shadows: shadows)),
+          ],
+        );
+
+      case OverlayTemplate.custom:
+        if (key == 'dist') {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(distNum,
+                  style: overlayTs(_font, fontSize: 74 * scale,
+                      fontWeight: FontWeight.w900, color: _textColor,
+                      height: 1.0, shadows: shadows)),
+              SizedBox(width: 5 * scale),
+              Padding(
+                padding: EdgeInsets.only(bottom: 6 * scale),
+                child: Text('km',
+                    style: overlayTs(_font, fontSize: 17 * scale,
+                        fontWeight: FontWeight.w700, color: _textColor, shadows: shadows)),
+              ),
+            ],
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(value,
+                style: overlayTs(_font, fontSize: 26 * scale,
+                    fontWeight: FontWeight.w800, color: _textColor, shadows: shadows)),
+            SizedBox(height: 2 * scale),
+            Text(label,
+                style: overlayTs(_font, fontSize: 11 * scale,
                     fontWeight: FontWeight.w600, color: _textColor,
                     letterSpacing: 0.5, shadows: shadows)),
           ],
@@ -476,15 +620,16 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: Colors.white,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20),
+          icon: const Icon(Icons.arrow_back_ios_new, color: Color(0xFF1C1C1E), size: 20),
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text('PaceGraphy',
-              style: TextStyle(fontFamily: 'SUIT', color: Colors.white,
+              style: TextStyle(fontFamily: 'SUIT', color: Color(0xFF1C1C1E),
                   fontWeight: FontWeight.w700, fontSize: 18, letterSpacing: 1.0)),
           Text(_t('기록 사진 생성', 'Create Record Photo'),
               style: const TextStyle(fontFamily: 'SUIT', color: Color(0xFF8E8E93),
@@ -492,10 +637,24 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
         ]),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: Icon(Icons.undo_rounded,
+                color: _undoStack.isEmpty ? const Color(0xFFCCCCCC) : const Color(0xFF1C1C1E),
+                size: 22),
+            onPressed: _undoStack.isEmpty ? null : _undo,
+            tooltip: '실행 취소',
+          ),
+          IconButton(
+            icon: Icon(Icons.redo_rounded,
+                color: _redoStack.isEmpty ? const Color(0xFFCCCCCC) : const Color(0xFF1C1C1E),
+                size: 22),
+            onPressed: _redoStack.isEmpty ? null : _redo,
+            tooltip: '다시 실행',
+          ),
           TextButton(
             onPressed: _save,
             child: Text(_t('저장', 'Save'),
-                style: const TextStyle(color: Colors.white,
+                style: const TextStyle(color: Color(0xFF1C1C1E),
                     fontWeight: FontWeight.w700, fontSize: 15)),
           ),
         ],
@@ -508,32 +667,32 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
               final maxW = constraints.maxWidth;
               final maxH = constraints.maxHeight;
 
+              if (_imageSize == null) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
               final img = File(widget.bgImage.path);
-              return FutureBuilder<Size>(
-                future: _getImageSize(img),
-                builder: (context, snap) {
-                  final photoAR = snap.hasData
-                      ? snap.data!.width / snap.data!.height
-                      : 9.0 / 16.0;
+              final photoAR = _imageSize!.width / _imageSize!.height;
 
-                  double dW, dH;
-                  if (maxW / maxH < photoAR) {
-                    dW = maxW; dH = maxW / photoAR;
-                  } else {
-                    dH = maxH; dW = maxH * photoAR;
-                  }
-                  _dispSize = Size(dW, dH);
+              double dW, dH;
+              if (maxW / maxH < photoAR) {
+                dW = maxW; dH = maxW / photoAR;
+              } else {
+                dH = maxH; dW = maxH * photoAR;
+              }
+              _dispSize = Size(dW, dH);
 
-                  return Center(
-                    child: SizedBox(
-                      width: dW, height: dH,
+              return Center(
+                child: SizedBox(
+                  width: dW, height: dH,
                       child: GestureDetector(
+                        onPanStart: _individualDrag ? null : _onDragStart,
                         onPanUpdate: _individualDrag ? null : _onDrag,
                         behavior: HitTestBehavior.opaque,
-                        child: Stack(children: [
+                        child: Stack(clipBehavior: Clip.none, children: [
                           Screenshot(
                             controller: _sc,
-                            child: Stack(children: [
+                            child: Stack(clipBehavior: Clip.none, children: [
                               Positioned.fill(
                                 child: _bgEffectBytes != null
                                     ? Image.memory(_bgEffectBytes!, fit: BoxFit.cover)
@@ -548,6 +707,9 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                                     final ratio = getOverlayCardAspectRatio(_template);
                                     final cardW = dW * ov.width;
                                     final cardH = cardW / ratio;
+                                    final refW = (_template == OverlayTemplate.poster || _template == OverlayTemplate.wide)
+                                        ? _kRefWidth / 1.5
+                                        : _kRefWidth;
                                     return Positioned(
                                       left: ov.pos.dx * dW,
                                       top: ov.pos.dy * dH,
@@ -556,8 +718,8 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                                       child: FittedBox(
                                         fit: BoxFit.fill,
                                         child: SizedBox(
-                                          width: _kRefWidth,
-                                          height: _kRefWidth / ratio,
+                                          width: refW,
+                                          height: refW / ratio,
                                           child: buildOverlayCard(
                                             _template, widget.record,
                                             _textColor, _font, widget.language,
@@ -570,8 +732,6 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                                 ),
 
                               // ── Individual drag mode ──
-                              // Each item uses the same visual style as the template.
-                              // scale = ov.width * dW / _kRefWidth matches card FittedBox scale.
                               if (_individualDrag)
                                 ..._activeItems().map((item) {
                                   final posN = _itemPositions[item.key]!;
@@ -584,15 +744,55 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                                         onPanUpdate: (d) => _onItemDrag(item.key, d),
                                         child: ValueListenableBuilder(
                                           valueListenable: _overlayNotifier,
-                                          builder: (_, ov, __) => _buildStatItem(
-                                            item.key, item.value, item.label,
-                                            ov.width * dW / _kRefWidth,
-                                          ),
+                                          builder: (_, ov, __) {
+                                            final refW = (_template == OverlayTemplate.poster || _template == OverlayTemplate.wide)
+                                                ? _kRefWidth / 1.5
+                                                : _kRefWidth;
+                                            return _buildStatItem(
+                                              item.key, item.value, item.label,
+                                              ov.width * dW / refW,
+                                            );
+                                          },
                                         ),
                                       ),
                                     ),
                                   );
                                 }),
+
+                              // ── 메모 (항상 독립 드래그) ──
+                              if (widget.record.memo.isNotEmpty)
+                                ValueListenableBuilder<Offset>(
+                                  valueListenable: _memoPosition,
+                                  builder: (_, pos, __) => Positioned(
+                                    left: pos.dx * dW,
+                                    top: pos.dy * dH,
+                                    child: GestureDetector(
+                                      onPanUpdate: _onMemoDrag,
+                                      child: ValueListenableBuilder(
+                                        valueListenable: _overlayNotifier,
+                                        builder: (_, ov, __) => Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment: CrossAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.directions_run,
+                                                color: _textColor,
+                                                size: _memoFontSize * 1.2),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              widget.record.memo,
+                                              style: overlayTs(_font,
+                                                fontSize: _memoFontSize,
+                                                fontWeight: FontWeight.w600,
+                                                color: _textColor,
+                                                shadows: const [],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                             ]),
                           ),
 
@@ -626,14 +826,15 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                       ),
                     ),
                   );
-                },
-              );
             }),
           ),
 
           // ── Controls ──
           Container(
-            color: const Color(0xFF1C1C1E),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Color(0xFFEEEEEE), width: 0.5)),
+            ),
             padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               // Template chips
@@ -642,28 +843,35 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 14),
-                  children: OverlayTemplate.values.map((t) {
+                  children: OverlayTemplate.values
+                      .where((t) => t != OverlayTemplate.tall)
+                      .map((t) {
                     final labels = {
-                      OverlayTemplate.poster: _t('포스터', 'Poster'),
-                      OverlayTemplate.wide:   _t('가로형', 'Wide'),
-                      OverlayTemplate.tall:   _t('세로형', 'Tall'),
-                      OverlayTemplate.list:   _t('리스트', 'List'),
-                      OverlayTemplate.grid:   _t('그리드', 'Grid'),
+                      OverlayTemplate.poster:  _t('포스터', 'Poster'),
+                      OverlayTemplate.classic: _t('클래식', 'Classic'),
+                      OverlayTemplate.wide:    _t('가로형', 'Wide'),
+                      OverlayTemplate.list:    _t('리스트', 'List'),
+                      OverlayTemplate.grid:    _t('그리드', 'Grid'),
+                      OverlayTemplate.custom:  _t('커스텀', 'Custom'),
                     };
                     final selected = _template == t;
                     return GestureDetector(
-                      onTap: () => setState(() => _template = t),
+                      onTap: () {
+                        _push();
+                        if (t == OverlayTemplate.custom) _setInitialPositions();
+                        setState(() => _template = t);
+                      },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         margin: const EdgeInsets.only(right: 8),
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                         decoration: BoxDecoration(
-                          color: selected ? Colors.white : const Color(0xFF2C2C2E),
+                          color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(labels[t]!,
                             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                                color: selected ? const Color(0xFF1C1C1E) : const Color(0xFF8E8E93))),
+                                color: selected ? Colors.white : const Color(0xFF555555))),
                       ),
                     );
                   }).toList(),
@@ -680,21 +888,21 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                     final sel = _textColor == c;
                     final isWhite = c == Colors.white;
                     return GestureDetector(
-                      onTap: () => setState(() => _textColor = c),
+                      onTap: () { _push(); setState(() => _textColor = c); },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         margin: const EdgeInsets.only(right: 8),
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                         decoration: BoxDecoration(
-                          color: sel ? Colors.white : const Color(0xFF2C2C2E),
+                          color: sel ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
-                            color: sel ? Colors.white : const Color(0xFF3C3C3E),
+                            color: sel ? const Color(0xFF1C1C1E) : const Color(0xFFDDDDDD),
                           ),
                         ),
                         child: Text(isWhite ? _t('흰색', 'White') : _t('검정', 'Black'),
                             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                                color: sel ? const Color(0xFF1C1C1E) : const Color(0xFF8E8E93))),
+                                color: sel ? Colors.white : const Color(0xFF555555))),
                       ),
                     );
                   }),
@@ -707,17 +915,17 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                         children: kRunCardFonts.map((f) {
                           final sel = _font == f;
                           return GestureDetector(
-                            onTap: () => setState(() => _font = f),
+                            onTap: () { _push(); setState(() => _font = f); },
                             child: Container(
                               margin: const EdgeInsets.only(right: 6),
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
-                                color: sel ? Colors.white : const Color(0xFF2C2C2E),
+                                color: sel ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(f.split(' ').first,
                                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                                      color: sel ? const Color(0xFF1C1C1E) : const Color(0xFF8E8E93))),
+                                      color: sel ? Colors.white : const Color(0xFF555555))),
                             ),
                           );
                         }).toList(),
@@ -729,11 +937,11 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
 
               const SizedBox(height: 8),
 
-              // Size slider
+              // 기록 크기 슬라이더
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(children: [
-                  Text(_t('크기', 'Size'),
+                  Text(_t('기록 크기', 'Size'),
                       style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93),
                           fontWeight: FontWeight.w600)),
                   Expanded(
@@ -744,14 +952,15 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                           trackHeight: 2,
                           thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
                           overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                          activeTrackColor: Colors.white,
-                          inactiveTrackColor: const Color(0xFF3C3C3E),
-                          thumbColor: Colors.white,
-                          overlayColor: Colors.white24,
+                          activeTrackColor: const Color(0xFF1C1C1E),
+                          inactiveTrackColor: const Color(0xFFDDDDDD),
+                          thumbColor: const Color(0xFF1C1C1E),
+                          overlayColor: Colors.black12,
                         ),
                         child: Slider(
                           value: ov.width.clamp(0.2, 0.95),
                           min: 0.2, max: 0.95,
+                          onChangeStart: (_) => _push(),
                           onChanged: (v) {
                             _overlayNotifier.value = (pos: ov.pos, width: v);
                           },
@@ -762,53 +971,30 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                 ]),
               ),
 
-              const SizedBox(height: 8),
-
-              // Heart rate + Individual drag row
+              // 메모 크기 슬라이더
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(children: [
-                  Text(_t('심박수', 'HR'),
+                  Text(_t('메모 크기', 'Memo'),
                       style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93),
                           fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () => setState(() => _showHeartRate = !_showHeartRate),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _showHeartRate ? Colors.white : const Color(0xFF2C2C2E),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _showHeartRate ? Colors.white : const Color(0xFF3C3C3E),
-                        ),
+                  Expanded(
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 2,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                        activeTrackColor: const Color(0xFF1C1C1E),
+                        inactiveTrackColor: const Color(0xFFDDDDDD),
+                        thumbColor: const Color(0xFF1C1C1E),
+                        overlayColor: Colors.black12,
                       ),
-                      child: Text(_showHeartRate ? _t('표시', 'Show') : _t('숨김', 'Hide'),
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                              color: _showHeartRate ? const Color(0xFF1C1C1E) : const Color(0xFF8E8E93))),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(_t('개별 드래그', 'Free Place'),
-                      style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93),
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: _toggleIndividualDrag,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _individualDrag ? Colors.white : const Color(0xFF2C2C2E),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _individualDrag ? Colors.white : const Color(0xFF3C3C3E),
-                        ),
+                      child: Slider(
+                        value: _memoFontSize,
+                        min: 10.0, max: 60.0,
+                        onChangeStart: (_) => _push(),
+                        onChanged: (v) => setState(() => _memoFontSize = v),
                       ),
-                      child: Text(_individualDrag ? _t('켜짐', 'ON') : _t('꺼짐', 'OFF'),
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                              color: _individualDrag ? const Color(0xFF1C1C1E) : const Color(0xFF8E8E93))),
                     ),
                   ),
                 ]),
@@ -826,7 +1012,7 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                   const SizedBox(width: 8),
                   if (_bgProcessing)
                     const SizedBox(width: 14, height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF1C1C1E)))
                   else ...[
                     _bgEffectChip(_t('없음', 'None'), _BgEffect.none),
                     const SizedBox(width: 6),
@@ -849,7 +1035,7 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                       onEnd: (_) => _applyBgEffect(_BgEffect.sketch),
                     )),
                     SizedBox(width: 28, child: Text(_sketchSharpness.round().toString(),
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white))),
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E)))),
                   ]),
                 ),
               ],
@@ -866,7 +1052,7 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
                       onEnd: (_) => _applyBgEffect(_BgEffect.colorSketch),
                     )),
                     SizedBox(width: 28, child: Text('${(_colorTintValue * 100).round()}%',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white))),
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF1C1C1E)))),
                   ]),
                 ),
               ],
@@ -888,12 +1074,12 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
-          color: selected ? Colors.white : const Color(0xFF2C2C2E),
+          color: selected ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Text(label, style: TextStyle(
           fontSize: 12, fontWeight: FontWeight.w600,
-          color: selected ? const Color(0xFF1C1C1E) : const Color(0xFF8E8E93),
+          color: selected ? Colors.white : const Color(0xFF555555),
         )),
       ),
     );
@@ -906,19 +1092,21 @@ class _RecordOverlayScreenState extends State<RecordOverlayScreen> {
         trackHeight: 2,
         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
         overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-        activeTrackColor: Colors.white,
-        inactiveTrackColor: const Color(0xFF3C3C3E),
-        thumbColor: Colors.white,
-        overlayColor: Colors.white24,
+        activeTrackColor: const Color(0xFF1C1C1E),
+        inactiveTrackColor: const Color(0xFFDDDDDD),
+        thumbColor: const Color(0xFF1C1C1E),
+        overlayColor: Colors.black12,
       ),
       child: Slider(value: value, min: min, max: max, onChanged: onChanged, onChangeEnd: onEnd),
     );
   }
 
-  Future<Size> _getImageSize(File file) async {
+  Future<void> _loadImageSize() async {
+    final file = File(widget.bgImage.path);
     final bytes = await file.readAsBytes();
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
-    return Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+    final size = Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+    if (mounted) setState(() => _imageSize = size);
   }
 }

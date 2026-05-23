@@ -49,10 +49,8 @@ List<Shadow> _sh(bool t) => t
     ? [const Shadow(blurRadius: 4, color: Colors.black54, offset: Offset(0.5, 0.5))]
     : [];
 
-// Shadow for overlay text: white text gets black shadow, dark text gets none.
-List<Shadow> _shFor(Color c) => c.computeLuminance() > 0.5
-    ? [const Shadow(blurRadius: 6, color: Colors.black54, offset: Offset(0.5, 0.5))]
-    : [];
+// Shadow for overlay text: none (removed per user request).
+List<Shadow> _shFor(Color c) => [];
 
 Widget buildRunningCard(
   RunCardTemplate type,
@@ -673,14 +671,16 @@ TextStyle _ots(String font, {
   shadows: shadows,
 );
 
-enum OverlayTemplate { poster, wide, tall, list, grid }
+enum OverlayTemplate { poster, classic, wide, tall, list, grid, custom }
 
 double getOverlayCardAspectRatio(OverlayTemplate t) => switch (t) {
-  OverlayTemplate.poster => 3.0,
-  OverlayTemplate.wide   => 5.0,
-  OverlayTemplate.tall   => 2.4,
-  OverlayTemplate.list   => 2.2,
-  OverlayTemplate.grid   => 2.5,
+  OverlayTemplate.poster  => 3.0,
+  OverlayTemplate.classic => 3.0,
+  OverlayTemplate.wide    => 5.0,
+  OverlayTemplate.tall    => 2.4,
+  OverlayTemplate.list    => 2.2,
+  OverlayTemplate.grid    => 2.5,
+  OverlayTemplate.custom  => 3.0,
 };
 
 Widget buildOverlayCard(
@@ -694,6 +694,8 @@ Widget buildOverlayCard(
   switch (type) {
     case OverlayTemplate.poster:
       return OverlayPosterCard(record: record, accent: accent, font: font, language: language, showHeartRate: showHeartRate);
+    case OverlayTemplate.classic:
+      return OverlayClassicCard(record: record, accent: accent, font: font, language: language, showHeartRate: showHeartRate);
     case OverlayTemplate.wide:
       return OverlayWideCard(record: record, accent: accent, font: font, language: language, showHeartRate: showHeartRate);
     case OverlayTemplate.tall:
@@ -702,6 +704,8 @@ Widget buildOverlayCard(
       return OverlayListCard(record: record, accent: accent, font: font, language: language, showHeartRate: showHeartRate);
     case OverlayTemplate.grid:
       return OverlayGridCard(record: record, accent: accent, font: font, language: language, showHeartRate: showHeartRate);
+    case OverlayTemplate.custom:
+      return const SizedBox.expand();
   }
 }
 
@@ -734,34 +738,136 @@ class OverlayPosterCard extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (dist.isNotEmpty)
-              Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text(dist, maxLines: 1, softWrap: false,
-                    style: _ots(font, fontSize: 74,
-                        fontWeight: FontWeight.w900, color: accent, height: 1.0, shadows: sh)),
-                const SizedBox(width: 5),
-                Padding(padding: const EdgeInsets.only(bottom: 6),
-                  child: Text('km', maxLines: 1, softWrap: false,
-                      style: _ots(font, fontSize: 17,
-                          fontWeight: FontWeight.w700, color: accent, shadows: sh))),
-              ]),
-            if (dist.isNotEmpty) const SizedBox(height: 10),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(dist, maxLines: 1, softWrap: false,
+                      style: _ots(font, fontSize: 74,
+                          fontWeight: FontWeight.w900, color: accent, height: 1.0, shadows: sh)),
+                  const SizedBox(width: 5),
+                  Padding(padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('km', maxLines: 1, softWrap: false,
+                        style: _ots(font, fontSize: 17,
+                            fontWeight: FontWeight.w700, color: accent, shadows: sh))),
+                ],
+              ),
+            if (dist.isNotEmpty && stats.isNotEmpty) const SizedBox(height: 8),
             if (stats.isNotEmpty)
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: stats.map((s) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.center,
-                      child: Text(s.$1, maxLines: 1, softWrap: false,
-                          style: _ots(font, fontSize: 24,
-                              fontWeight: FontWeight.w800, color: accent, shadows: sh))),
-                    const SizedBox(height: 2),
-                    Text(s.$2, maxLines: 1, softWrap: false, textAlign: TextAlign.center,
-                        style: _ots(font, fontSize: 11,
-                            fontWeight: FontWeight.w600, color: accent,
-                            letterSpacing: 0.5, shadows: sh)),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (int i = 0; i < stats.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 24),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(stats[i].$1, maxLines: 1, softWrap: false,
+                            style: _ots(font, fontSize: 26,
+                                fontWeight: FontWeight.w800, color: accent, shadows: sh)),
+                        const SizedBox(height: 2),
+                        Text(stats[i].$2, maxLines: 1, softWrap: false, textAlign: TextAlign.center,
+                            style: _ots(font, fontSize: 11,
+                                fontWeight: FontWeight.w600, color: accent,
+                                letterSpacing: 0.5, shadows: sh)),
+                      ],
+                    ),
                   ],
-                )).toList()),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Overlay: Classic (3.0:1) ──────────────────────────────────────────────────
+// Row layout: dist left (FittedBox fills flex:6 width), stats right (flex:4).
+class OverlayClassicCard extends StatelessWidget {
+  final RunningRecord record;
+  final Color accent;
+  final String font;
+  final LabelLanguage language;
+  final bool showHeartRate;
+  const OverlayClassicCard({super.key, required this.record, required this.accent,
+      required this.font, required this.language, this.showHeartRate = true});
+  String _t(String ko, String en) => language == LabelLanguage.korean ? ko : en;
+
+  @override
+  Widget build(BuildContext context) {
+    final sh = _shFor(accent);
+    final dist = record.distance.replaceAll(RegExp(r'\s*km'), '').trim();
+    final stats = <(String, String)>[];
+    if (record.time.isNotEmpty)                        stats.add((record.time,      _t('시간',   'TIME')));
+    if (record.pace.isNotEmpty)                        stats.add((record.pace,      _t('페이스', 'PACE')));
+    if (record.heartRate.isNotEmpty && showHeartRate)  stats.add((record.heartRate, _t('심박',   'HR')));
+
+    return AspectRatio(
+      aspectRatio: 3.0,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 18, 14, 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // 거리 (왼쪽) — FittedBox가 flex:7 공간을 채움
+            Expanded(
+              flex: 7,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (dist.isNotEmpty)
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                        Text(dist, maxLines: 1, softWrap: false,
+                            style: _ots(font, fontSize: 111,
+                                fontWeight: FontWeight.w900, color: accent, height: 1.0, shadows: sh)),
+                        const SizedBox(width: 5),
+                        Padding(padding: const EdgeInsets.only(bottom: 6),
+                          child: Text('km', maxLines: 1, softWrap: false,
+                              style: _ots(font, fontSize: 26,
+                                  fontWeight: FontWeight.w700, color: accent, shadows: sh))),
+                      ]),
+                    ),
+                ],
+              ),
+            ),
+            // 스탯 (오른쪽 1열)
+            if (stats.isNotEmpty) ...[
+              const SizedBox(width: 28),
+              Expanded(
+                flex: 3,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (int i = 0; i < stats.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 6),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          Text(stats[i].$1, maxLines: 1, softWrap: false,
+                              style: _ots(font, fontSize: 26,
+                                  fontWeight: FontWeight.w800, color: accent, shadows: sh)),
+                          const SizedBox(width: 6),
+                          Text(stats[i].$2, maxLines: 1, softWrap: false,
+                              style: _ots(font, fontSize: 11,
+                                  fontWeight: FontWeight.w600, color: accent,
+                                  letterSpacing: 0.5, shadows: sh)),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -797,28 +903,25 @@ class OverlayWideCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             for (int i = 0; i < cols.length; i++) ...[
-              if (i > 0) const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.center,
-                      child: Text(cols[i].$1, maxLines: 1, softWrap: false,
-                          style: _ots(font, fontSize: 19,
-                              fontWeight: FontWeight.w800, color: accent, shadows: sh)),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(cols[i].$2, maxLines: 1, softWrap: false, textAlign: TextAlign.center,
-                        style: _ots(font, fontSize: 11,
-                            fontWeight: FontWeight.w600, color: accent,
-                            letterSpacing: 0.5, shadows: sh)),
-                  ],
-                ),
+              if (i > 0) const SizedBox(width: 20),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(cols[i].$1, maxLines: 1, softWrap: false,
+                      style: _ots(font, fontSize: 26,
+                          fontWeight: FontWeight.w800, color: accent, shadows: sh)),
+                  const SizedBox(height: 2),
+                  Text(cols[i].$2, maxLines: 1, softWrap: false, textAlign: TextAlign.center,
+                      style: _ots(font, fontSize: 11,
+                          fontWeight: FontWeight.w600, color: accent,
+                          letterSpacing: 0.5, shadows: sh)),
+                ],
               ),
             ],
           ],
@@ -922,27 +1025,37 @@ class OverlayListCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             for (int i = 0; i < rows.length; i++) ...[
               if (i > 0) const SizedBox(height: 4),
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 52,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 72,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
                       child: Text(rows[i].$2, maxLines: 1, softWrap: false,
-                          style: _ots(font, fontSize: 11,
+                          style: _ots(font, fontSize: 26,
                               fontWeight: FontWeight.w600, color: accent,
                               letterSpacing: 0.5, shadows: sh)),
                     ),
-                    const SizedBox(width: 10),
-                    Text(rows[i].$1, maxLines: 1, softWrap: false,
-                        style: _ots(font, fontSize: 22,
-                            fontWeight: FontWeight.w800, color: accent, shadows: sh)),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(rows[i].$1, maxLines: 1, softWrap: false,
+                          style: _ots(font, fontSize: 26,
+                              fontWeight: FontWeight.w800, color: accent, shadows: sh)),
+                    ),
+                  ),
+                ],
               ),
             ],
           ],
@@ -981,11 +1094,11 @@ class OverlayGridCard extends StatelessWidget {
       children: [
         FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
           child: Text(val, maxLines: 1, softWrap: false,
-              style: _ots(font, fontSize: 19,
+              style: _ots(font, fontSize: 26,
                   fontWeight: FontWeight.w800, color: accent, shadows: sh))),
         const SizedBox(height: 2),
         Text(lbl, maxLines: 1, softWrap: false,
-            style: _ots(font, fontSize: 10,
+            style: _ots(font, fontSize: 11,
                 fontWeight: FontWeight.w600, color: accent,
                 letterSpacing: 0.5, shadows: sh)),
       ],

@@ -5,6 +5,7 @@ class RunningRecord {
   final String calories;
   final String heartRate;
   final String date;
+  final String memo;
 
   RunningRecord({
     this.distance = '',
@@ -13,5 +14,6 @@ class RunningRecord {
     this.calories = '',
     this.heartRate = '',
     this.date = '',
+    this.memo = '',
   });
 }

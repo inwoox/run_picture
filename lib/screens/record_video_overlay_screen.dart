@@ -11,7 +11,7 @@ import '../models/running_record.dart';
 import '../models/overlay_style.dart';
 import '../widgets/running_cards.dart';
 
-const double _kRefWidth = 400.0;
+const double _kRefWidth = 257.0; // 400 / 1.56 → 같은 슬라이더 위치에서 텍스트 1.56배
 
 class RecordVideoOverlayScreen extends StatefulWidget {
   final XFile video;
@@ -30,6 +30,15 @@ class RecordVideoOverlayScreen extends StatefulWidget {
       _RecordVideoOverlayScreenState();
 }
 
+// Snapshot of editable UI state for undo/redo.
+typedef _VSnap = ({
+  OverlayTemplate template,
+  Color textColor,
+  String font,
+  ({Offset pos, double width}) overlay,
+  double memoFontSize,
+});
+
 class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
   // ── Video ────────────────────────────────────────────────────────────────
   VideoPlayerController? _vpc;
@@ -41,14 +50,60 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
   Color _textColor = const Color(0xFF1C1C1E);
   String _font = 'Nanum Pen Script';
   bool _showHeartRate = true;
-  bool _individualDrag = false;
+  double _memoFontSize = 18.0;
+  bool get _individualDrag => _template == OverlayTemplate.custom;
 
   late final ValueNotifier<({Offset pos, double width})> _overlayNotifier;
   late final Map<String, ValueNotifier<Offset>> _itemPositions;
+  late final ValueNotifier<Offset> _memoPosition;
   Size _dispSize = Size.zero;
 
   // ── Saving ───────────────────────────────────────────────────────────────
   bool _saving = false;
+
+  // ── Undo / Redo ──────────────────────────────────────────────────────────
+  final List<_VSnap> _undoStack = [];
+  final List<_VSnap> _redoStack = [];
+
+  _VSnap _snap() => (
+    template: _template,
+    textColor: _textColor,
+    font: _font,
+    overlay: _overlayNotifier.value,
+    memoFontSize: _memoFontSize,
+  );
+
+  void _push() {
+    _undoStack.add(_snap());
+    if (_undoStack.length > 50) _undoStack.removeAt(0);
+    _redoStack.clear();
+  }
+
+  void _undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_snap());
+    final s = _undoStack.removeLast();
+    _overlayNotifier.value = s.overlay;
+    setState(() {
+      _template = s.template;
+      _textColor = s.textColor;
+      _font = s.font;
+      _memoFontSize = s.memoFontSize;
+    });
+  }
+
+  void _redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_snap());
+    final s = _redoStack.removeLast();
+    _overlayNotifier.value = s.overlay;
+    setState(() {
+      _template = s.template;
+      _textColor = s.textColor;
+      _font = s.font;
+      _memoFontSize = s.memoFontSize;
+    });
+  }
 
   String _t(String ko, String en) =>
       widget.language == LabelLanguage.korean ? ko : en;
@@ -57,13 +112,14 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
   void initState() {
     super.initState();
     _overlayNotifier =
-        ValueNotifier((pos: const Offset(0.05, 0.05), width: 0.55));
+        ValueNotifier((pos: const Offset(0.05, 0.05), width: 0.66));
     _itemPositions = {
       'dist': ValueNotifier(Offset.zero),
       'time': ValueNotifier(Offset.zero),
       'pace': ValueNotifier(Offset.zero),
       'hr': ValueNotifier(Offset.zero),
     };
+    _memoPosition = ValueNotifier(const Offset(0.05, 0.80));
     _initVideo();
   }
 
@@ -86,10 +142,16 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
     _vpc?.dispose();
     _overlayNotifier.dispose();
     for (final n in _itemPositions.values) n.dispose();
+    _memoPosition.dispose();
     super.dispose();
   }
 
   // ── Card drag ────────────────────────────────────────────────────────────
+  void _onDragStart(DragStartDetails _) {
+    _push();
+    setState(() {});
+  }
+
   void _onDrag(DragUpdateDetails d) {
     if (_dispSize == Size.zero) return;
     final ov = _overlayNotifier.value;
@@ -107,6 +169,16 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
     if (_dispSize == Size.zero) return;
     final pos = _itemPositions[key]!.value;
     _itemPositions[key]!.value = Offset(
+      pos.dx + d.delta.dx / _dispSize.width,
+      pos.dy + d.delta.dy / _dispSize.height,
+    );
+  }
+
+  // ── Memo drag ────────────────────────────────────────────────────────────
+  void _onMemoDrag(DragUpdateDetails d) {
+    if (_dispSize == Size.zero) return;
+    final pos = _memoPosition.value;
+    _memoPosition.value = Offset(
       pos.dx + d.delta.dx / _dispSize.width,
       pos.dy + d.delta.dy / _dispSize.height,
     );
@@ -135,6 +207,7 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
 
     switch (_template) {
       case OverlayTemplate.poster:
+      case OverlayTemplate.classic:
         _itemPositions['dist']!.value = at(0.05, 0.08);
         for (int i = 0; i < sN; i++) {
           _itemPositions[statsItems[i].key]!.value =
@@ -159,12 +232,12 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
         _itemPositions['time']!.value = at(0.05, 0.62);
         _itemPositions['pace']!.value = at(0.53, 0.25);
         _itemPositions['hr']!.value = at(0.53, 0.62);
-    }
-  }
 
-  void _toggleIndividualDrag() {
-    if (!_individualDrag) _setInitialPositions();
-    setState(() => _individualDrag = !_individualDrag);
+      case OverlayTemplate.custom:
+        for (int i = 0; i < aN; i++) {
+          _itemPositions[allKeys[i]]!.value = at(0.05, (i + 0.5) / aN);
+        }
+    }
   }
 
   // ── Active items ─────────────────────────────────────────────────────────
@@ -225,7 +298,53 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
           children: [
             Text(value,
                 style: overlayTs(_font,
-                    fontSize: 24 * scale,
+                    fontSize: 26 * scale,
+                    fontWeight: FontWeight.w800,
+                    color: _textColor,
+                    shadows: shadows)),
+            SizedBox(height: 2 * scale),
+            Text(label,
+                style: overlayTs(_font,
+                    fontSize: 11 * scale,
+                    fontWeight: FontWeight.w600,
+                    color: _textColor,
+                    letterSpacing: 0.5,
+                    shadows: shadows)),
+          ],
+        );
+      case OverlayTemplate.classic:
+        if (key == 'dist') {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(distNum,
+                  style: overlayTs(_font,
+                      fontSize: 111 * scale,
+                      fontWeight: FontWeight.w900,
+                      color: _textColor,
+                      height: 1.0,
+                      shadows: shadows)),
+              SizedBox(width: 5 * scale),
+              Padding(
+                padding: EdgeInsets.only(bottom: 6 * scale),
+                child: Text('km',
+                    style: overlayTs(_font,
+                        fontSize: 26 * scale,
+                        fontWeight: FontWeight.w700,
+                        color: _textColor,
+                        shadows: shadows)),
+              ),
+            ],
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(value,
+                style: overlayTs(_font,
+                    fontSize: 26 * scale,
                     fontWeight: FontWeight.w800,
                     color: _textColor,
                     shadows: shadows)),
@@ -246,7 +365,7 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
           children: [
             Text(value,
                 style: overlayTs(_font,
-                    fontSize: 19 * scale,
+                    fontSize: 26 * scale,
                     fontWeight: FontWeight.w800,
                     color: _textColor,
                     shadows: shadows)),
@@ -313,15 +432,15 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
           children: [
             Text(label,
                 style: overlayTs(_font,
-                    fontSize: 11 * scale,
+                    fontSize: 26 * scale,
                     fontWeight: FontWeight.w600,
                     color: _textColor,
                     letterSpacing: 0.5,
                     shadows: shadows)),
-            SizedBox(width: 10 * scale),
+            SizedBox(width: 12 * scale),
             Text(value,
                 style: overlayTs(_font,
-                    fontSize: 22 * scale,
+                    fontSize: 26 * scale,
                     fontWeight: FontWeight.w800,
                     color: _textColor,
                     shadows: shadows)),
@@ -348,6 +467,53 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                     shadows: shadows)),
           ],
         );
+
+      case OverlayTemplate.custom:
+        if (key == 'dist') {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(distNum,
+                  style: overlayTs(_font,
+                      fontSize: 74 * scale,
+                      fontWeight: FontWeight.w900,
+                      color: _textColor,
+                      height: 1.0,
+                      shadows: shadows)),
+              SizedBox(width: 5 * scale),
+              Padding(
+                padding: EdgeInsets.only(bottom: 6 * scale),
+                child: Text('km',
+                    style: overlayTs(_font,
+                        fontSize: 17 * scale,
+                        fontWeight: FontWeight.w700,
+                        color: _textColor,
+                        shadows: shadows)),
+              ),
+            ],
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text(value,
+                style: overlayTs(_font,
+                    fontSize: 26 * scale,
+                    fontWeight: FontWeight.w800,
+                    color: _textColor,
+                    shadows: shadows)),
+            SizedBox(height: 2 * scale),
+            Text(label,
+                style: overlayTs(_font,
+                    fontSize: 11 * scale,
+                    fontWeight: FontWeight.w600,
+                    color: _textColor,
+                    letterSpacing: 0.5,
+                    shadows: shadows)),
+          ],
+        );
     }
   }
 
@@ -358,14 +524,17 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
     final dW = _dispSize.width;
     final dH = _dispSize.height;
     final ratio = getOverlayCardAspectRatio(_template);
-    final textScale = ov.width * dW / _kRefWidth;
+    final cardRefW = (_template == OverlayTemplate.poster || _template == OverlayTemplate.wide)
+        ? _kRefWidth / 1.5
+        : _kRefWidth;
+    final textScale = ov.width * dW / cardRefW;
 
     return Material(
       color: Colors.transparent,
       child: SizedBox(
         width: dW,
         height: dH,
-        child: Stack(children: [
+        child: Stack(clipBehavior: Clip.none, children: [
           if (!_individualDrag)
             Positioned(
               left: ov.pos.dx * dW,
@@ -375,8 +544,8 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
               child: FittedBox(
                 fit: BoxFit.fill,
                 child: SizedBox(
-                  width: _kRefWidth,
-                  height: _kRefWidth / ratio,
+                  width: cardRefW,
+                  height: cardRefW / ratio,
                   child: buildOverlayCard(
                     _template, widget.record,
                     _textColor, _font, widget.language,
@@ -395,6 +564,21 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                     item.key, item.value, item.label, textScale),
               );
             }),
+
+          // ── 메모 (캡처 포함) ──
+          if (widget.record.memo.isNotEmpty)
+            Positioned(
+              left: _memoPosition.value.dx * dW,
+              top: _memoPosition.value.dy * dH,
+              child: Text(
+                widget.record.memo,
+                style: overlayTs(_font,
+                  fontSize: 18 * textScale,
+                  fontWeight: FontWeight.w600,
+                  color: _textColor,
+                ),
+              ),
+            ),
         ]),
       ),
     );
@@ -474,18 +658,19 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: Colors.white,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new,
-              color: Colors.white, size: 20),
+              color: Color(0xFF1C1C1E), size: 20),
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(mainAxisSize: MainAxisSize.min, children: [
           const Text('PaceGraphy',
               style: TextStyle(
                   fontFamily: 'SUIT',
-                  color: Colors.white,
+                  color: Color(0xFF1C1C1E),
                   fontWeight: FontWeight.w700,
                   fontSize: 18,
                   letterSpacing: 1.0)),
@@ -498,6 +683,20 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
         ]),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: Icon(Icons.undo_rounded,
+                color: _undoStack.isEmpty ? const Color(0xFFCCCCCC) : const Color(0xFF1C1C1E),
+                size: 22),
+            onPressed: _undoStack.isEmpty ? null : _undo,
+            tooltip: '실행 취소',
+          ),
+          IconButton(
+            icon: Icon(Icons.redo_rounded,
+                color: _redoStack.isEmpty ? const Color(0xFFCCCCCC) : const Color(0xFF1C1C1E),
+                size: 22),
+            onPressed: _redoStack.isEmpty ? null : _redo,
+            tooltip: '다시 실행',
+          ),
           _saving
               ? const Padding(
                   padding: EdgeInsets.only(right: 16),
@@ -505,7 +704,7 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                     child: SizedBox(
                       width: 18, height: 18,
                       child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
+                          color: Color(0xFF1C1C1E), strokeWidth: 2),
                     ),
                   ),
                 )
@@ -513,7 +712,7 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                   onPressed: _save,
                   child: Text(_t('저장', 'Save'),
                       style: const TextStyle(
-                          color: Colors.white,
+                          color: Color(0xFF1C1C1E),
                           fontWeight: FontWeight.w700,
                           fontSize: 15)),
                 ),
@@ -546,6 +745,7 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                 child: SizedBox(
                   width: dW, height: dH,
                   child: GestureDetector(
+                    onPanStart: _individualDrag ? null : _onDragStart,
                     onPanUpdate: _individualDrag ? null : _onDrag,
                     onTap: () {
                       if (_vpc == null) return;
@@ -554,7 +754,7 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                           : _vpc!.play();
                     },
                     behavior: HitTestBehavior.opaque,
-                    child: Stack(children: [
+                    child: Stack(clipBehavior: Clip.none, children: [
                       // ── Video preview ──
                       Positioned.fill(child: VideoPlayer(_vpc!)),
 
@@ -567,6 +767,9 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                                 getOverlayCardAspectRatio(_template);
                             final cardW = dW * ov.width;
                             final cardH = cardW / ratio;
+                            final refW = (_template == OverlayTemplate.poster || _template == OverlayTemplate.wide)
+                                ? _kRefWidth / 1.5
+                                : _kRefWidth;
                             return Positioned(
                               left: ov.pos.dx * dW,
                               top: ov.pos.dy * dH,
@@ -575,8 +778,8 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                               child: FittedBox(
                                 fit: BoxFit.fill,
                                 child: SizedBox(
-                                  width: _kRefWidth,
-                                  height: _kRefWidth / ratio,
+                                  width: refW,
+                                  height: refW / ratio,
                                   child: buildOverlayCard(
                                     _template, widget.record,
                                     _textColor, _font, widget.language,
@@ -602,15 +805,55 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                                     _onItemDrag(item.key, d),
                                 child: ValueListenableBuilder(
                                   valueListenable: _overlayNotifier,
-                                  builder: (_, ov, __) => _buildStatItem(
-                                    item.key, item.value, item.label,
-                                    ov.width * dW / _kRefWidth,
-                                  ),
+                                  builder: (_, ov, __) {
+                                    final refW = (_template == OverlayTemplate.poster || _template == OverlayTemplate.wide)
+                                        ? _kRefWidth / 1.5
+                                        : _kRefWidth;
+                                    return _buildStatItem(
+                                      item.key, item.value, item.label,
+                                      ov.width * dW / refW,
+                                    );
+                                  },
                                 ),
                               ),
                             ),
                           );
                         }),
+
+                      // ── 메모 (항상 독립 드래그) ──
+                      if (widget.record.memo.isNotEmpty)
+                        ValueListenableBuilder<Offset>(
+                          valueListenable: _memoPosition,
+                          builder: (_, pos, __) => Positioned(
+                            left: pos.dx * dW,
+                            top: pos.dy * dH,
+                            child: GestureDetector(
+                              onPanUpdate: _onMemoDrag,
+                              child: ValueListenableBuilder(
+                                valueListenable: _overlayNotifier,
+                                builder: (_, ov, __) => Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.directions_run,
+                                        color: _textColor,
+                                        size: _memoFontSize * 1.2),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      widget.record.memo,
+                                      style: overlayTs(_font,
+                                        fontSize: _memoFontSize,
+                                        fontWeight: FontWeight.w600,
+                                        color: _textColor,
+                                        shadows: const [],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
 
                       // ── Hint ──
                       Positioned(
@@ -676,7 +919,10 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
 
           // ── Controls ──
           Container(
-            color: const Color(0xFF1C1C1E),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(top: BorderSide(color: Color(0xFFEEEEEE), width: 0.5)),
+            ),
             padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -686,17 +932,24 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 14),
-                  children: OverlayTemplate.values.map((t) {
+                  children: OverlayTemplate.values
+                      .where((t) => t != OverlayTemplate.tall)
+                      .map((t) {
                     final labels = {
-                      OverlayTemplate.poster: _t('포스터', 'Poster'),
-                      OverlayTemplate.wide: _t('가로형', 'Wide'),
-                      OverlayTemplate.tall: _t('세로형', 'Tall'),
-                      OverlayTemplate.list: _t('리스트', 'List'),
-                      OverlayTemplate.grid: _t('그리드', 'Grid'),
+                      OverlayTemplate.poster:  _t('포스터', 'Poster'),
+                      OverlayTemplate.classic: _t('클래식', 'Classic'),
+                      OverlayTemplate.wide:    _t('가로형', 'Wide'),
+                      OverlayTemplate.list:    _t('리스트', 'List'),
+                      OverlayTemplate.grid:    _t('그리드', 'Grid'),
+                      OverlayTemplate.custom:  _t('커스텀', 'Custom'),
                     };
                     final selected = _template == t;
                     return GestureDetector(
-                      onTap: () => setState(() => _template = t),
+                      onTap: () {
+                        _push();
+                        if (t == OverlayTemplate.custom) _setInitialPositions();
+                        setState(() => _template = t);
+                      },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         margin: const EdgeInsets.only(right: 8),
@@ -704,8 +957,8 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                             horizontal: 14, vertical: 6),
                         decoration: BoxDecoration(
                           color: selected
-                              ? Colors.white
-                              : const Color(0xFF2C2C2E),
+                              ? const Color(0xFF1C1C1E)
+                              : const Color(0xFFF2F2F7),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(labels[t]!,
@@ -713,8 +966,8 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                                 color: selected
-                                    ? const Color(0xFF1C1C1E)
-                                    : const Color(0xFF8E8E93))),
+                                    ? Colors.white
+                                    : const Color(0xFF555555))),
                       ),
                     );
                   }).toList(),
@@ -731,19 +984,19 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                     final sel = _textColor == c;
                     final isWhite = c == Colors.white;
                     return GestureDetector(
-                      onTap: () => setState(() => _textColor = c),
+                      onTap: () { _push(); setState(() => _textColor = c); },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         margin: const EdgeInsets.only(right: 8),
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 5),
                         decoration: BoxDecoration(
-                          color: sel ? Colors.white : const Color(0xFF2C2C2E),
+                          color: sel ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(
                             color: sel
-                                ? Colors.white
-                                : const Color(0xFF3C3C3E),
+                                ? const Color(0xFF1C1C1E)
+                                : const Color(0xFFDDDDDD),
                           ),
                         ),
                         child: Text(
@@ -752,8 +1005,8 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                                 color: sel
-                                    ? const Color(0xFF1C1C1E)
-                                    : const Color(0xFF8E8E93))),
+                                    ? Colors.white
+                                    : const Color(0xFF555555))),
                       ),
                     );
                   }),
@@ -766,15 +1019,15 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                         children: kRunCardFonts.map((f) {
                           final sel = _font == f;
                           return GestureDetector(
-                            onTap: () => setState(() => _font = f),
+                            onTap: () { _push(); setState(() => _font = f); },
                             child: Container(
                               margin: const EdgeInsets.only(right: 6),
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
                                 color: sel
-                                    ? Colors.white
-                                    : const Color(0xFF2C2C2E),
+                                    ? const Color(0xFF1C1C1E)
+                                    : const Color(0xFFF2F2F7),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(f.split(' ').first,
@@ -782,8 +1035,8 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                       color: sel
-                                          ? const Color(0xFF1C1C1E)
-                                          : const Color(0xFF8E8E93))),
+                                          ? Colors.white
+                                          : const Color(0xFF555555))),
                             ),
                           );
                         }).toList(),
@@ -795,11 +1048,11 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
 
               const SizedBox(height: 8),
 
-              // Size slider
+              // 기록 크기 슬라이더
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(children: [
-                  Text(_t('크기', 'Size'),
+                  Text(_t('기록 크기', 'Size'),
                       style: const TextStyle(
                           fontSize: 11,
                           color: Color(0xFF8E8E93),
@@ -814,18 +1067,18 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                               enabledThumbRadius: 7),
                           overlayShape: const RoundSliderOverlayShape(
                               overlayRadius: 14),
-                          activeTrackColor: Colors.white,
-                          inactiveTrackColor: const Color(0xFF3C3C3E),
-                          thumbColor: Colors.white,
-                          overlayColor: Colors.white24,
+                          activeTrackColor: const Color(0xFF1C1C1E),
+                          inactiveTrackColor: const Color(0xFFDDDDDD),
+                          thumbColor: const Color(0xFF1C1C1E),
+                          overlayColor: Colors.black12,
                         ),
                         child: Slider(
                           value: ov.width.clamp(0.2, 0.95),
                           min: 0.2,
                           max: 0.95,
+                          onChangeStart: (_) => _push(),
                           onChanged: (v) {
-                            _overlayNotifier.value =
-                                (pos: ov.pos, width: v);
+                            _overlayNotifier.value = (pos: ov.pos, width: v);
                           },
                         ),
                       ),
@@ -834,82 +1087,32 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                 ]),
               ),
 
-              const SizedBox(height: 8),
-
-              // HR + Individual drag row
+              // 메모 크기 슬라이더
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Row(children: [
-                  Text(_t('심박수', 'HR'),
+                  Text(_t('메모 크기', 'Memo'),
                       style: const TextStyle(
                           fontSize: 11,
                           color: Color(0xFF8E8E93),
                           fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () =>
-                        setState(() => _showHeartRate = !_showHeartRate),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _showHeartRate
-                            ? Colors.white
-                            : const Color(0xFF2C2C2E),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _showHeartRate
-                              ? Colors.white
-                              : const Color(0xFF3C3C3E),
-                        ),
+                  Expanded(
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 2,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                        activeTrackColor: const Color(0xFF1C1C1E),
+                        inactiveTrackColor: const Color(0xFFDDDDDD),
+                        thumbColor: const Color(0xFF1C1C1E),
+                        overlayColor: Colors.black12,
                       ),
-                      child: Text(
-                          _showHeartRate
-                              ? _t('표시', 'Show')
-                              : _t('숨김', 'Hide'),
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: _showHeartRate
-                                  ? const Color(0xFF1C1C1E)
-                                  : const Color(0xFF8E8E93))),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(_t('개별 드래그', 'Free Place'),
-                      style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFF8E8E93),
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: _toggleIndividualDrag,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _individualDrag
-                            ? Colors.white
-                            : const Color(0xFF2C2C2E),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _individualDrag
-                              ? Colors.white
-                              : const Color(0xFF3C3C3E),
-                        ),
+                      child: Slider(
+                        value: _memoFontSize,
+                        min: 10.0, max: 60.0,
+                        onChangeStart: (_) => _push(),
+                        onChanged: (v) => setState(() => _memoFontSize = v),
                       ),
-                      child: Text(
-                          _individualDrag
-                              ? _t('켜짐', 'ON')
-                              : _t('꺼짐', 'OFF'),
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: _individualDrag
-                                  ? const Color(0xFF1C1C1E)
-                                  : const Color(0xFF8E8E93))),
                     ),
                   ),
                 ]),

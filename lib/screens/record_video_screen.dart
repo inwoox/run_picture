@@ -6,6 +6,7 @@ import '../models/overlay_style.dart';
 import '../app_settings.dart';
 import '../services/ocr_service.dart';
 import '../widgets/ocr_confirm_sheet.dart';
+import '../widgets/video_ratio_sheet.dart';
 import 'record_video_overlay_screen.dart';
 
 class RecordVideoScreen extends StatefulWidget {
@@ -49,11 +50,15 @@ class _RecordVideoScreenState extends State<RecordVideoScreen> {
       final confirmed = await showOcrConfirmSheet(context, record, languageNotifier.value);
       if (!mounted) return;
       if (confirmed == null) return;
+      if (!mounted) return;
+      final outputRatio = await showVideoRatioSheet(context);
+      if (!mounted) return;
       Navigator.push(context, MaterialPageRoute(
         builder: (_) => RecordVideoOverlayScreen(
           video: _selectedVideo!,
           record: confirmed,
           language: languageNotifier.value,
+          outputRatio: outputRatio,
         ),
       ));
     } catch (e) {

@@ -17,12 +17,14 @@ class RecordVideoOverlayScreen extends StatefulWidget {
   final XFile video;
   final RunningRecord record;
   final LabelLanguage language;
+  final double? outputRatio; // null = 원본 비율
 
   const RecordVideoOverlayScreen({
     super.key,
     required this.video,
     required this.record,
     required this.language,
+    this.outputRatio,
   });
 
   @override
@@ -570,13 +572,24 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
             Positioned(
               left: _memoPosition.value.dx * dW,
               top: _memoPosition.value.dy * dH,
-              child: Text(
-                widget.record.memo,
-                style: overlayTs(_font,
-                  fontSize: 18 * textScale,
-                  fontWeight: FontWeight.w600,
-                  color: _textColor,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(Icons.directions_run,
+                      color: _textColor,
+                      size: _memoFontSize * 1.2),
+                  const SizedBox(width: 4),
+                  Text(
+                    widget.record.memo,
+                    style: overlayTs(_font,
+                      fontSize: _memoFontSize,
+                      fontWeight: FontWeight.w600,
+                      color: _textColor,
+                      shadows: const [],
+                    ),
+                  ),
+                ],
               ),
             ),
         ]),
@@ -589,11 +602,34 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
     if (!_videoReady || _dispSize == Size.zero) return;
     setState(() => _saving = true);
     try {
-      final videoW = _videoSize.width;
-      final dispW = _dispSize.width;
+      // 출력 사이즈 계산 (crop 방식: 업스케일 없이 중앙 잘라내기)
+      final videoAR = _videoSize.width / _videoSize.height;
+      final R = widget.outputRatio ?? videoAR;
+      int outW, outH;
+      if (widget.outputRatio == null) {
+        // 원본 비율: 1920px 상한만 적용
+        if (_videoSize.width > 1920) {
+          outW = 1920;
+          outH = (1920 / videoAR).round();
+        } else {
+          outW = _videoSize.width.toInt();
+          outH = _videoSize.height.toInt();
+        }
+      } else {
+        // Cover crop: videoAR >= R → 높이 기준 잘라내기, videoAR < R → 너비 기준 잘라내기
+        if (videoAR >= R) {
+          outH = _videoSize.height.toInt().clamp(1, 1920);
+          outW = (outH * R).round();
+        } else {
+          outW = _videoSize.width.toInt().clamp(1, 1920);
+          outH = (outW / R).round();
+        }
+      }
+      if (outW % 2 != 0) outW += 1;
+      if (outH % 2 != 0) outH += 1;
 
-      // Capture overlay at video resolution (pixelRatio scales display→video)
-      final pr = (videoW / dispW).clamp(0.5, 6.0);
+      // 오버레이 PNG 캡처 (출력 해상도 기준)
+      final pr = (outW / _dispSize.width).clamp(0.5, 6.0);
       final overlayBytes = await ScreenshotController().captureFromWidget(
         _buildDisplayOverlay(),
         pixelRatio: pr,
@@ -607,18 +643,29 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
       await File(overlayPath).writeAsBytes(overlayBytes);
 
       final outPath = '${tmp.path}/rp_video_$ts.mp4';
-      final vW = _videoSize.width.toInt();
-      final vH = _videoSize.height.toInt();
 
-      // Scale overlay PNG to exact video dimensions, then composite with alpha
-      final cmd = '-i "${widget.video.path}" -i "$overlayPath" '
-          '-filter_complex '
-          '"[1:v]scale=${vW}:${vH}[ovl];[0:v][ovl]overlay=0:0:format=auto,format=yuv420p[vout]" '
-          '-map "[vout]" -map 0:a? '
-          '-c:v libx264 -crf 18 -preset fast -c:a copy '
-          '-movflags +faststart -y "$outPath"';
+      // 비율 변환: crop(잘라내기), 원본이면 scale만
+      final needsCrop = widget.outputRatio != null &&
+          (videoAR - R).abs() > 0.01;
+      final vidFilter = needsCrop
+          ? '[0:v]crop=${outW}:${outH}:(iw-${outW})/2:(ih-${outH})/2[vid]'
+          : '[0:v]scale=${outW}:${outH}[vid]';
 
-      final session = await FFmpegKit.execute(cmd);
+      final useToolbox = Platform.isIOS;
+      final session = await FFmpegKit.executeWithArguments([
+        '-i', widget.video.path,
+        '-i', overlayPath,
+        '-filter_complex',
+        '$vidFilter;[1:v]scale=${outW}:${outH}[ovl];[vid][ovl]overlay=0:0:format=auto,format=yuv420p[vout]',
+        '-map', '[vout]',
+        '-map', '0:a?',
+        '-c:v', useToolbox ? 'h264_videotoolbox' : 'libx264',
+        if (useToolbox) ...[ '-b:v', '8000k' ]
+        else ...[ '-crf', '23', '-preset', 'ultrafast' ],
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-y', outPath,
+      ]);
       final rc = await session.getReturnCode();
 
       await File(overlayPath).delete();
@@ -733,11 +780,12 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
               }
 
               final videoAR = _videoSize.width / _videoSize.height;
+              final displayAR = widget.outputRatio ?? videoAR;
               double dW, dH;
-              if (maxW / maxH < videoAR) {
-                dW = maxW; dH = maxW / videoAR;
+              if (maxW / maxH < displayAR) {
+                dW = maxW; dH = maxW / displayAR;
               } else {
-                dH = maxH; dW = maxH * videoAR;
+                dH = maxH; dW = maxH * displayAR;
               }
               _dispSize = Size(dW, dH);
 
@@ -755,8 +803,22 @@ class _RecordVideoOverlayScreenState extends State<RecordVideoOverlayScreen> {
                     },
                     behavior: HitTestBehavior.opaque,
                     child: Stack(clipBehavior: Clip.none, children: [
-                      // ── Video preview ──
-                      Positioned.fill(child: VideoPlayer(_vpc!)),
+                      // ── Video preview (cover crop: 비율에 맞게 중앙 잘라내기) ──
+                      if (widget.outputRatio != null)
+                        Positioned.fill(
+                          child: ClipRect(
+                            child: OverflowBox(
+                              alignment: Alignment.center,
+                              minWidth:  videoAR >= widget.outputRatio! ? dH * videoAR : dW,
+                              maxWidth:  videoAR >= widget.outputRatio! ? dH * videoAR : dW,
+                              minHeight: videoAR >= widget.outputRatio! ? dH : dW / videoAR,
+                              maxHeight: videoAR >= widget.outputRatio! ? dH : dW / videoAR,
+                              child: VideoPlayer(_vpc!),
+                            ),
+                          ),
+                        )
+                      else
+                        Positioned.fill(child: VideoPlayer(_vpc!)),
 
                       // ── Card mode ──
                       if (!_individualDrag)
